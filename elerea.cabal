@@ -1,0 +1,34 @@
+Name:                elerea
+Version:             0.1.0
+Cabal-Version:       >= 1.2
+Synopsis:            A minimalistic FRP library
+Category:            reactivity, FRP
+Description:
+
+ Elerea (Eventless reactivity) is a tiny continuous-time FRP
+ implementation without the notion of event-based switching and
+ sampling, with first-class signals (time-varying values). Reactivity
+ is provided through a latching mechanism where a signal changes its
+ behaviour as dictated by a boolean input signal.
+
+ Elerea provides an easy to use applicative interface, supports
+ recursive signals (a definition like @sine = integral 0 (integral 1
+ (-sine))@ works without a hitch) and arbitrary external input. Even
+ though it is possible to form circles, there is no need for explicit
+ delays thanks to the two-phase update mechanism.
+
+Author:              Patai Gergely
+Maintainer:          Patai Gergely (patai@iit.bme.hu)
+Copyright:           (c) 2009, Patai Gergely
+License:             BSD3
+License-File:        LICENSE
+Stability:           experimental
+Build-Type:          Simple
+
+Library
+  Exposed-Modules:     
+    FRP.Elerea
+    FRP.Elerea.Internal
+
+  Build-Depends:       base
+  ghc-options:         -Wall -O2
