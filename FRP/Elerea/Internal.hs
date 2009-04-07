@@ -80,8 +80,8 @@ data SignalNode a
     | forall t1 t2 t3 t4 t5 . SNL5 (t1 -> t2 -> t3 -> t4 -> t5 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4) (Signal t5)
 
 debugLog :: String -> IO a -> IO a
-debugLog s io = putStrLn s >> io
---debugLog _ io = io
+--debugLog s io = putStrLn s >> io
+debugLog _ io = io
 
 instance Functor Signal where
     fmap = (<*>) . pure

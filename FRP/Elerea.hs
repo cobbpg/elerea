@@ -20,7 +20,7 @@ as a transfer function. A possible implementation that can be used on
 any 'Fractional' signal looks like this:
 
 @
- integral x0 s = transfer x0 (\dt x x0 -> x0+x*realToFrac dt) s
+ integral x0 s = transfer x0 (\\dt x x0 -> x0+x*realToFrac dt) s
 @
 
 Head to "FRP.Elerea.Internal" for the implementation details.
