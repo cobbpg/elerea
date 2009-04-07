@@ -15,11 +15,21 @@ import Control.Monad
 import Data.IORef
 import System.IO.Unsafe
 
+-- * Implementation
+
+-- ** Some type synonyms
+
+{-| Time is continuous. Nothing fancy. -}
+
 type Time = Double
 
 type DTime = Double
 
+{-| Sinks are used when feeding input into peripheral-bound signals. -}
+
 type Sink a = a -> IO ()
+
+-- ** The data structures behind signals
 
 {-| A signal is represented as a /transactional/ structural node. -}
 
@@ -156,6 +166,8 @@ instance Num t => Num (Signal t) where
     negate = fmap negate
     fromInteger = pure . fromInteger
 
+-- ** Internal functions to run the network
+
 {-| This function is really just a shorthand to create a reference to
 a given node. -}
 
@@ -203,20 +215,6 @@ commit (S s) = do
                      _                     -> return ()
     _        -> return () 
 
-{-| Advancing the whole network that the given signal depends on by
-the amount of time given in 'dt'. Note that the shared 'time' signal
-is also advanced, so this function should only be used for sampling
-the top level. -}
-
-superstep :: Signal a -> DTime -> IO a
-superstep world dt = do
-  snapshot <- signalValue world dt
-  commit world
-  t <- readIORef timeRef
-  let t' = t+dt
-  writeIORef timeRef $! t'
-  return snapshot
-
 {-| Aging the signal. Stateful signals have their state forced to
 prevent building up big thunks, and the latcher also does its job
 here. The other nodes are structurally static. -}
@@ -259,6 +257,24 @@ sample (SNL5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2
 timeRef :: IORef Time
 timeRef = unsafePerformIO (newIORef 0)
 
+-- ** Userland primitives
+
+{-| Advancing the whole network that the given signal depends on by
+the amount of time given in the second argument. Note that the shared
+'time' signal is also advanced, so this function should only be used
+for sampling the top level. -}
+
+superstep :: Signal a -- ^ the top-level signal
+          -> DTime    -- ^ the amount of time to advance
+          -> IO a     -- ^ the value of the signal before the update
+superstep world dt = do
+  snapshot <- signalValue world dt
+  commit world
+  t <- readIORef timeRef
+  let t' = t+dt
+  writeIORef timeRef $! t'
+  return snapshot
+
 {-| The global time. -}
 
 {-# NOINLINE time #-}
@@ -267,30 +283,41 @@ time = createSignal (SNR timeRef)
 
 {-| A pure time function. -}
 
-stateless :: (Time -> a) -> Signal a
+stateless :: (Time -> a) -- ^ the function to wrap
+          -> Signal a
 stateless = createSignal . SNF
 
 {-| A pure stateful signal. -}
 
-stateful :: a -> (DTime -> a -> a) -> Signal a
+stateful :: a                 -- ^ initial state
+         -> (DTime -> a -> a) -- ^ state transformation
+         -> Signal a
 stateful x0 f = createSignal (SNS x0 f)
 
 {-| A stateful transfer function. -}
 
-transfer :: a -> (DTime -> t -> a -> a) -> Signal t -> Signal a
+transfer :: a                      -- ^ initial state
+         -> (DTime -> t -> a -> a) -- ^ state updater function
+         -> Signal t               -- ^ input signal
+         -> Signal a
 transfer x0 f s = createSignal (SNT s x0 f)
 
 {-| Reactive signal that starts out as @s@ and can change its
-behaviour to the one supplied in @ss@ whenever @e@ is true. -}
+behaviour to the one supplied in @ss@ whenever @e@ is true. The change
+can only be observed in the next instant. -}
 
-latcher :: Signal a -> Signal Bool -> Signal (Signal a) -> Signal a
+latcher :: Signal a          -- ^ @s@: initial behaviour
+        -> Signal Bool       -- ^ @e@: latch control signal
+        -> Signal (Signal a) -- ^ @ss@: signal of potential future behaviours
+        -> Signal a
 latcher s e ss = createSignal (SNE s e ss)
 
 {-| A signal that can be directly fed through the sink function
 returned. This can be used to attach the network to the outer
 world. -}
 
-external :: a -> IO (Signal a, Sink a)
+external :: a                     -- ^ initial value
+         -> IO (Signal a, Sink a) -- ^ the signal and an IO function to feed it
 external x0 = do
   ref <- newIORef x0
   snr <- newIORef (Cur (SNR ref))

@@ -29,6 +29,7 @@ Head to "FRP.Elerea.Internal" for the implementation details.
 
 module FRP.Elerea (
   Time, DTime,
+  Sink,
   Signal,
   superstep,
   time,
