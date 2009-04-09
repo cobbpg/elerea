@@ -6,6 +6,41 @@
 This is the core module of Elerea, which contains the signal
 implementation and the primitive constructors.
 
+The basic idea is to create a dataflow network whose structure closely
+resembles the user's definitions by turning each combinator into a
+mutable variable (an IORef).  In other words, each signal is
+represented by a variable.  Such a variable contains information about
+the operation to perform and (depending on the operation) references
+to other signals.  For instance, a pointwise function application
+created by the '<*>' operator contains an 'SNA' node, which holds two
+references: one to the function signal and another to the argument
+signal.
+
+In order to have a pure(-looking) applicative interface, the library
+relies on 'unsafePerformIO' to create the references on demand.  In
+contrast, the execution of the network is explicitly marked as an IO
+operation.  The core library exposes a single function to animate the
+network called 'superstep', which takes a signal and a time interval,
+and mutates all the variables the signal depends on.  It is supposed
+to be called repeatedly in a loop that also takes care of user input.
+
+To ensure consistency, a superstep has two phases: evaluation and
+finalisation.  During evaluation, each signal affected is sampled at
+the current point of time ('sample'), advanced by the desired time
+('advance'), and both of these pieces of data are stored in its
+reference.  If the value of a signal is requested multiple times, the
+sample is simply reused, and no further aging is performed.  After
+successfully sampling the top-level signal, the finalisation process
+throws away the intermediate samples and marks the aged signals as the
+current ones, ready to be sampled again.  Evaluation is done by the
+'signalValue' function, while finalisation is done by 'commit'.  Since
+these functions are invoked recursively on a data structure with
+existential types, their types also need to be explicity quantified.
+
+As a bonus, applicative nodes are automatically collapsed into lifted
+functions of up to five arguments.  This optimisation significantly
+reduces the number of nodes in the network.
+
 -}
 
 module FRP.Elerea.Internal where
@@ -19,7 +54,7 @@ import System.IO.Unsafe
 
 -- ** Some type synonyms
 
-{-| Time is continuous. Nothing fancy. -}
+{-| Time is continuous.  Nothing fancy. -}
 
 type Time = Double
 
@@ -46,7 +81,7 @@ data SignalTrans a
     | Tra a (SignalNode a)
 
 {-| The possible structures of a node are defined by the 'SignalNode'
-type. Note that the @SNLx@ nodes are only needed to optimise
+type.  Note that the @SNLx@ nodes are only needed to optimise
 applicatives, they can all be expressed in terms of @SNK@ and
 @SNA@. -}
 
@@ -79,16 +114,19 @@ data SignalNode a
     -- | @SNL5 f@: @liftA5 f@
     | forall t1 t2 t3 t4 t5 . SNL5 (t1 -> t2 -> t3 -> t4 -> t5 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4) (Signal t5)
 
+{-| You can uncomment the verbose version of this function to see the
+applicative optimisations in action. -}
+
 debugLog :: String -> IO a -> IO a
-debugLog s io = putStrLn s >> io
---debugLog _ io = io
+--debugLog s io = putStrLn s >> io
+debugLog _ io = io
 
 instance Functor Signal where
     fmap = (<*>) . pure
 
-{-| The @Applicative@ instance with run-time optimisation. The @<*>@
+{-| The 'Applicative' instance with run-time optimisation.  The '<*>'
 operator tries to move all the pure parts to its left side in order to
-flatten the structure, hence cutting down on book-keeping costs. Since
+flatten the structure, hence cutting down on book-keeping costs.  Since
 applicatives are used with pure functions and lifted values most of
 the time, one can gain a lot by merging these nodes. -}
 
@@ -187,7 +225,7 @@ createSignal :: SignalNode a -> Signal a
 createSignal = S . unsafePerformIO . newIORef . Cur
 
 {-| Sampling and aging the signal and all of its dependencies, at the
-same time. We don't need the aged signal in the current superstep,
+same time.  We don't need the aged signal in the current superstep,
 only the current value, so we sample before propagating the changes,
 which might require the fresh sample because of recursive
 definitions. -}
@@ -201,6 +239,9 @@ signalValue (S r) dt = do
                   -- only in the next superstep.
                   v <- sample s dt
                   -- We memorise the sample to handle loops nicely.
+                  -- The undefined future signal cannot bite us,
+                  -- because we don't need it during the evaluation
+                  -- phase.
                   writeIORef r (Tra v undefined)
                   s' <- advance s dt
                   writeIORef r (Tra v s')
@@ -214,7 +255,7 @@ commit (S s) = do
   t <- readIORef s
   case t of
     Tra _ s' -> do writeIORef s (Cur s')
-                   -- TODO: branching can be parallelised
+                   -- TODO: branching can be trivially parallelised
                    case s' of
                      SNT s _ _             -> commit s
                      SNA sf sx             -> commit sf >> commit sx
@@ -227,9 +268,9 @@ commit (S s) = do
                      _                     -> return ()
     _        -> return () 
 
-{-| Aging the signal. Stateful signals have their state forced to
+{-| Aging the signal.  Stateful signals have their state forced to
 prevent building up big thunks, and the latcher also does its job
-here. The other nodes are structurally static. -}
+here.  The other nodes are structurally static. -}
 
 advance :: SignalNode a -> DTime -> IO (SignalNode a)
 advance (SNS x f)       dt = x `seq` return (SNS (f dt x) f)
@@ -242,12 +283,15 @@ advance sw@(SNE _ e ss) dt = do b <- signalValue e dt
                                   else return sw
 advance s               _  = return s
 
-{-| Sampling the signal at the current moment. This is where static
-nodes propagate changes to those they depend on. Note the latcher rule
-('SNE'): the signal is sampled before latching takes place, therefore
-even if the change is instantaneous, its effect cannot be observed at
-the moment of latching. This is needed to prevent dependency loops and
-make recursive definitions involving switching possible. -}
+{-| Sampling the signal at the current moment.  This is where static
+nodes propagate changes to those they depend on.  Note the latcher
+rule ('SNE'): the signal is sampled before latching takes place,
+therefore even if the change is instantaneous, its effect cannot be
+observed at the moment of latching.  This is needed to prevent
+dependency loops and make recursive definitions involving switching
+possible.  The stateful signals 'SNS' and 'SNT' are similar, although
+it is only the transfer function where it matters that the input
+signal cannot affect the current output, only the next one. -}
 
 sample :: SignalNode a -> DTime -> IO a
 sample (SNK x)                 _  = return x
@@ -306,7 +350,11 @@ stateful :: a                 -- ^ initial state
          -> Signal a
 stateful x0 f = createSignal (SNS x0 f)
 
-{-| A stateful transfer function. -}
+{-| A stateful transfer function.  The current input can only affect
+the next output.  Note that this is not really a limitation, since one
+can combine the output of a transfer function with the signal it acts
+on using lifted function application, so it is possible to define an
+integral without a delay, for instance. -}
 
 transfer :: a                      -- ^ initial state
          -> (DTime -> t -> a -> a) -- ^ state updater function
