@@ -6,9 +6,9 @@ construct instead. The user sees the functionality through an
 applicative interface, which is used to build up a network of
 interconnected mutable references. The network is executed
 iteratively, where each superstep consists of two phases:
-sampling-aging and finalisation. This makes it possible to form
-circles without delays. For instance, the following code is a possible
-way to define an approximation of our beloved trig functions:
+sampling-aging and finalisation.  As an example, the following code is
+a possible way to define an approximation of our beloved trig
+functions:
 
 @
  sine = integral 0 cosine

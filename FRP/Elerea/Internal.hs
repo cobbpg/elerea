@@ -8,7 +8,7 @@ implementation and the primitive constructors.
 
 The basic idea is to create a dataflow network whose structure closely
 resembles the user's definitions by turning each combinator into a
-mutable variable (an IORef).  In other words, each signal is
+mutable variable (an 'IORef').  In other words, each signal is
 represented by a variable.  Such a variable contains information about
 the operation to perform and (depending on the operation) references
 to other signals.  For instance, a pointwise function application
@@ -288,7 +288,7 @@ nodes propagate changes to those they depend on.  Note the latcher
 rule ('SNE'): the signal is sampled before latching takes place,
 therefore even if the change is instantaneous, its effect cannot be
 observed at the moment of latching.  This is needed to prevent
-dependency loops and make recursive definitions involving switching
+dependency loops and make recursive definitions involving latching
 possible.  The stateful signals 'SNS' and 'SNT' are similar, although
 it is only the transfer function where it matters that the input
 signal cannot affect the current output, only the next one. -}
@@ -351,10 +351,7 @@ stateful :: a                 -- ^ initial state
 stateful x0 f = createSignal (SNS x0 f)
 
 {-| A stateful transfer function.  The current input can only affect
-the next output.  Note that this is not really a limitation, since one
-can combine the output of a transfer function with the signal it acts
-on using lifted function application, so it is possible to define an
-integral without a delay, for instance. -}
+the next output, i.e. there is an implicit delay. -}
 
 transfer :: a                      -- ^ initial state
          -> (DTime -> t -> a -> a) -- ^ state updater function
