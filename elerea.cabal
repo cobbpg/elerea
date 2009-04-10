@@ -14,15 +14,15 @@ Description:
  Elerea provides an easy to use applicative interface, supports
  recursive signals (a definition like @sine = integral 0 (integral 1
  (-sine))@ works without a hitch) and arbitrary external
- input. Circles are allowed by the implicit delay on stateful transfer
+ input. Cycles are allowed by the implicit delay on stateful transfer
  functions. For the time being it is not possible to create arbitrary
  transfer functions without a delay, but this limitation can be
  removed later.
  .
  This is a minimal library that defines only some basic primitives,
- and you are advised to install @elerea-examples@ as well to see how
- to build non-trivial systems with it. The examples are separated in
- order to minimise the dependencies of the core library.
+ and you are advised to install @elerea-examples@ as well to get an
+ idea how to build non-trivial systems with it. The examples are
+ separated in order to minimise the dependencies of the core library.
 
 Author:              Patai Gergely
 Maintainer:          Patai Gergely (patai@iit.bme.hu)
