@@ -32,8 +32,6 @@ module FRP.Elerea (
   Sink,
   Signal,
   superstep,
-  time,
-  stateless,
   stateful,
   transfer,
   latcher,

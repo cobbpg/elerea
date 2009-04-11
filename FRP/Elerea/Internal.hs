@@ -70,15 +70,22 @@ type Sink a = a -> IO ()
 
 newtype Signal a = S (IORef (SignalTrans a))
 
-{-| A node can have two states: stable (freshly created or finalised)
-or mutating (in the process of aging). -}
+{-| A node can have four states that distinguish various stages of
+sampling and aging. -}
 
 data SignalTrans a
-    -- | @Cur s@ is simply the signal @s@
-    = Cur (SignalNode a)
-    -- | @Tra x s@ is an already sampled signal, where @x@ is the
-    -- current value and @s@ is the new version of the signal
-    | Tra a (SignalNode a)
+    -- | @Ready s@ is simply the signal @s@ that was not sampled yet
+    = Ready (SignalNode a)
+    -- | @Sampling s@ is still @s@ after its current value was
+    -- requested, but still not delivered
+    | Sampling (SignalNode a)
+    -- | @Sample x@ is just the value @x@, eventually to be replaced
+    -- by the aged version of its corresponding signal
+    | Sample a
+    -- | @Aged x s@ is an already sampled signal, where @x@ is the
+    -- current value and @s@ is the new version of the signal for the
+    -- next superstep
+    | Aged a (SignalNode a)
 
 {-| The possible structures of a node are defined by the 'SignalNode'
 type.  Note that the @SNLx@ nodes are only needed to optimise
@@ -88,8 +95,6 @@ applicatives, they can all be expressed in terms of @SNK@ and
 data SignalNode a
     -- | @SNK x@: constantly @x@
     = SNK a
-    -- | @SNF f@: time function @f@ (absolute time)
-    | SNF (Time -> a)
     -- | @SNS x t@: stateful generator, where @x@ is current state and
     -- @t@ is the update function
     | SNS a (DTime -> a -> a)
@@ -136,20 +141,20 @@ instance Applicative Signal where
     -- | Point-wise application of a function and a data signal (like @ZipList@)
     f@(S rf) <*> x@(S rx) = unsafePerformIO $ do
       -- General fall-back case
-      c <- newIORef (Cur (SNA f x))
+      c <- newIORef (Ready (SNA f x))
 
-      let opt s = writeIORef c (Cur s)
+      let opt s = writeIORef c (Ready s)
 
       -- Optimisations might go haywire in the presence of loops,
       -- so we need to prepare to meeting undefined references by
       -- wrapping reads into exception handlers.
 
       flip catch (const (return ())) $ do
-        Cur nf <- readIORef rf
+        Ready nf <- readIORef rf
 
         merged <- flip catch (const (return False)) $ do
           -- Merging constant branches from the two sides
-          Cur nx <- readIORef rx
+          Ready nx <- readIORef rx
           case (nf,nx) of
             (SNK g,SNK y)                  -> debugLog "merge_00" $ opt (SNK (g y))
             (SNK g,SNL1 h y1)              -> debugLog "merge_01" $ opt (SNL1 (g.h) y1)
@@ -222,7 +227,7 @@ instance Fractional t => Fractional (Signal t) where
 a given node. -}
 
 createSignal :: SignalNode a -> Signal a
-createSignal = S . unsafePerformIO . newIORef . Cur
+createSignal = S . unsafePerformIO . newIORef . Ready
 
 {-| Sampling and aging the signal and all of its dependencies, at the
 same time.  We don't need the aged signal in the current superstep,
@@ -234,19 +239,35 @@ signalValue :: forall a . Signal a -> DTime -> IO a
 signalValue (S r) dt = do
   t <- readIORef r
   case t of
-    Cur s   -> do -- TODO: advance can be evaluated in a separate
-                  -- thread, since we don't need its result right away,
-                  -- only in the next superstep.
-                  v <- sample s dt
-                  -- We memorise the sample to handle loops nicely.
-                  -- The undefined future signal cannot bite us,
-                  -- because we don't need it during the evaluation
-                  -- phase.
-                  writeIORef r (Tra v undefined)
-                  s' <- advance s dt
-                  writeIORef r (Tra v s')
-                  return v
-    Tra v _ -> return v
+    Ready s    -> do writeIORef r (Sampling s)
+                     -- TODO: advance can be evaluated in a separate
+                     -- thread, since we don't need its result right
+                     -- away, only in the next superstep.
+                     v <- sample s dt
+                     -- We memorise the sample to handle loops
+                     -- nicely.  The undefined future signal cannot
+                     -- bite us, because we don't need it during the
+                     -- evaluation phase.
+                     writeIORef r (Sample v)
+                     s' <- advance s v dt
+                     writeIORef r (Aged v s')
+                     return v
+    Sampling s -> do -- We started sampling this already, so there is
+                     -- a dependency cycle we have to resolve by
+                     -- adding a delay to stateful signals. Stateless
+                     -- signals should not form a loop, which is
+                     -- obvious...
+                     v <- sampleDelayed s dt
+                     writeIORef r (Sample v)
+                     -- Since we are sampling this already, aging
+                     -- will be performed by the case above.  Also,
+                     -- the result is memoised by the system, so we
+                     -- are not calculating anything twice.  Note
+                     -- that this is an old value, so it shouldn't be
+                     -- used for aging anyway.
+                     return v
+    Sample v   -> return v
+    Aged v _   -> return v
 
 {-| Finalising the aged signals for the next round. -}
 
@@ -254,34 +275,35 @@ commit :: forall a . Signal a -> IO ()
 commit (S s) = do
   t <- readIORef s
   case t of
-    Tra _ s' -> do writeIORef s (Cur s')
-                   -- TODO: branching can be trivially parallelised
-                   case s' of
-                     SNT s _ _             -> commit s
-                     SNA sf sx             -> commit sf >> commit sx
-                     SNL1 _ s              -> commit s
-                     SNL2 _ s1 s2          -> commit s1 >> commit s2
-                     SNL3 _ s1 s2 s3       -> commit s1 >> commit s2 >> commit s3
-                     SNL4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4
-                     SNL5 _ s1 s2 s3 s4 s5 -> commit s1 >> commit s2 >> commit s3 >> commit s4 >> commit s5
-                     SNE s e ss            -> commit s >> commit e >> commit ss
-                     _                     -> return ()
-    _        -> return () 
+    Aged _ s' -> do writeIORef s (Ready s')
+                    -- TODO: branching can be trivially parallelised
+                    case s' of
+                      SNT s _ _             -> commit s
+                      SNA sf sx             -> commit sf >> commit sx
+                      SNL1 _ s              -> commit s
+                      SNL2 _ s1 s2          -> commit s1 >> commit s2
+                      SNL3 _ s1 s2 s3       -> commit s1 >> commit s2 >> commit s3
+                      SNL4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4
+                      SNL5 _ s1 s2 s3 s4 s5 -> commit s1 >> commit s2 >> commit s3 >> commit s4 >> commit s5
+                      SNE s e ss            -> commit s >> commit e >> commit ss
+                      _                     -> return ()
+    Ready _   -> return () 
+    _         -> error "Inconsistent state: signal not aged!"
 
 {-| Aging the signal.  Stateful signals have their state forced to
 prevent building up big thunks, and the latcher also does its job
 here.  The other nodes are structurally static. -}
 
-advance :: SignalNode a -> DTime -> IO (SignalNode a)
-advance (SNS x f)       dt = x `seq` return (SNS (f dt x) f)
-advance (SNT s x f)     dt = x `seq` do t <- signalValue s dt
-                                        return (SNT s (f dt t x) f)
-advance sw@(SNE _ e ss) dt = do b <- signalValue e dt
-                                s' <- signalValue ss dt
-                                if b
-                                  then return (SNE s' e ss)
-                                  else return sw
-advance s               _  = return s
+advance :: SignalNode a -> a -> DTime -> IO (SignalNode a)
+advance (SNS _ f)       v _  = v `seq` return (SNS v f)
+advance (SNT s _ f)     v _  = v `seq` return (SNT s v f)
+advance sw@(SNE _ e ss) _ dt = do -- These are ready samples!
+                                  b <- signalValue e dt
+                                  s' <- signalValue ss dt
+                                  if b
+                                    then return (SNE s' e ss)
+                                    else return sw
+advance s               _ _  = return s
 
 {-| Sampling the signal at the current moment.  This is where static
 nodes propagate changes to those they depend on.  Note the latcher
@@ -295,11 +317,13 @@ signal cannot affect the current output, only the next one. -}
 
 sample :: SignalNode a -> DTime -> IO a
 sample (SNK x)                 _  = return x
-sample (SNF f)                 _  = f <$> readIORef timeRef
-sample (SNS x _)               _  = return x
-sample (SNT _ x _)             _  = return x
+sample (SNS x f)               dt = return $! f dt x
+sample (SNT s x f)             dt = do t <- signalValue s dt
+                                       return $! f dt t x
 sample (SNA sf sx)             dt = signalValue sf dt <*> signalValue sx dt
-sample (SNE s _ _)             dt = signalValue s dt
+sample (SNE s e ss)            dt = do b <- signalValue e dt
+                                       s' <- signalValue ss dt
+                                       signalValue (if b then s' else s) dt
 sample (SNR r)                 _  = readIORef r
 sample (SNL1 f s)              dt = f <$> signalValue s dt
 sample (SNL2 f s1 s2)          dt = liftM2 f (signalValue s1 dt) (signalValue s2 dt)
@@ -307,11 +331,11 @@ sample (SNL3 f s1 s2 s3)       dt = liftM3 f (signalValue s1 dt) (signalValue s2
 sample (SNL4 f s1 s2 s3 s4)    dt = liftM4 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt)
 sample (SNL5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt) (signalValue s5 dt)
 
-{-| The actual variable that keeps track of global time. -}
-
-{-# NOINLINE timeRef #-}
-timeRef :: IORef Time
-timeRef = unsafePerformIO (newIORef 0)
+sampleDelayed :: SignalNode a -> DTime -> IO a
+sampleDelayed (SNS x _)   _  = return x
+sampleDelayed (SNT _ x _) _  = return x
+sampleDelayed (SNE s _ _) dt = signalValue s dt
+sampleDelayed sn          dt = sample sn dt
 
 -- ** Userland primitives
 
@@ -326,22 +350,7 @@ superstep :: Signal a -- ^ the top-level signal
 superstep world dt = do
   snapshot <- signalValue world dt
   commit world
-  t <- readIORef timeRef
-  let t' = t+dt
-  writeIORef timeRef $! t'
   return snapshot
-
-{-| The global time. -}
-
-{-# NOINLINE time #-}
-time :: Signal Time
-time = createSignal (SNR timeRef)
-
-{-| A pure time function. -}
-
-stateless :: (Time -> a) -- ^ the function to wrap
-          -> Signal a
-stateless = createSignal . SNF
 
 {-| A pure stateful signal. -}
 
@@ -377,5 +386,5 @@ external :: a                     -- ^ initial value
          -> IO (Signal a, Sink a) -- ^ the signal and an IO function to feed it
 external x0 = do
   ref <- newIORef x0
-  snr <- newIORef (Cur (SNR ref))
+  snr <- newIORef (Ready (SNR ref))
   return (S snr,writeIORef ref)

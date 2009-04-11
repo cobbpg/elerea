@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             0.1.0
+Version:             0.2.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -31,6 +31,8 @@ License:             BSD3
 License-File:        LICENSE
 Stability:           experimental
 Build-Type:          Simple
+Extra-Source-Files:
+  CHANGES
 
 Library
   Exposed-Modules:
