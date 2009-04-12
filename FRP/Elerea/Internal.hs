@@ -32,10 +32,13 @@ reference.  If the value of a signal is requested multiple times, the
 sample is simply reused, and no further aging is performed.  After
 successfully sampling the top-level signal, the finalisation process
 throws away the intermediate samples and marks the aged signals as the
-current ones, ready to be sampled again.  Evaluation is done by the
-'signalValue' function, while finalisation is done by 'commit'.  Since
-these functions are invoked recursively on a data structure with
-existential types, their types also need to be explicity quantified.
+current ones, ready to be sampled again.  If there is a dependency
+loop, the system tries to use the `sampleDelayed` function instead of
+`sample` to get a useful value at the problematic spot instead of
+entering an infinite loop.  Evaluation is done by the 'signalValue'
+function, while finalisation is done by 'commit'.  Since these
+functions are invoked recursively on a data structure with existential
+types, their types also need to be explicity quantified.
 
 As a bonus, applicative nodes are automatically collapsed into lifted
 functions of up to five arguments.  This optimisation significantly
@@ -295,7 +298,7 @@ prevent building up big thunks, and the latcher also does its job
 here.  The other nodes are structurally static. -}
 
 advance :: SignalNode a -> a -> DTime -> IO (SignalNode a)
-advance (SNS _ f)       v _  = v `seq` return (SNS v f)
+advance (SNS x f)       _ dt = x `seq` return (SNS (f dt x) f)
 advance (SNT s _ f)     v _  = v `seq` return (SNT s v f)
 advance sw@(SNE _ e ss) _ dt = do -- These are ready samples!
                                   b <- signalValue e dt
@@ -306,18 +309,13 @@ advance sw@(SNE _ e ss) _ dt = do -- These are ready samples!
 advance s               _ _  = return s
 
 {-| Sampling the signal at the current moment.  This is where static
-nodes propagate changes to those they depend on.  Note the latcher
-rule ('SNE'): the signal is sampled before latching takes place,
-therefore even if the change is instantaneous, its effect cannot be
-observed at the moment of latching.  This is needed to prevent
-dependency loops and make recursive definitions involving latching
-possible.  The stateful signals 'SNS' and 'SNT' are similar, although
-it is only the transfer function where it matters that the input
-signal cannot affect the current output, only the next one. -}
+nodes propagate changes to those they depend on.  Transfer functions
+('SNT') and latchers ('SNE') work without delay, i.e. the effects of
+their input signals can be observed in the same superstep. -}
 
 sample :: SignalNode a -> DTime -> IO a
 sample (SNK x)                 _  = return x
-sample (SNS x f)               dt = return $! f dt x
+sample (SNS x _)               _  = return x
 sample (SNT s x f)             dt = do t <- signalValue s dt
                                        return $! f dt t x
 sample (SNA sf sx)             dt = signalValue sf dt <*> signalValue sx dt
@@ -331,8 +329,15 @@ sample (SNL3 f s1 s2 s3)       dt = liftM3 f (signalValue s1 dt) (signalValue s2
 sample (SNL4 f s1 s2 s3 s4)    dt = liftM4 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt)
 sample (SNL5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt) (signalValue s5 dt)
 
+{-| Sampling the signal with some kind of delay in order to resolve
+dependency loops.  Transfer functions simply return their previous
+output, while latchers postpone the change and pass through the
+current value of their current signal even if the latch control signal
+is true at the moment.  Other types of signals are always handled by
+the `signal` function, so it is not possible to create a stateful loop
+composed of solely stateless combinators. -}
+
 sampleDelayed :: SignalNode a -> DTime -> IO a
-sampleDelayed (SNS x _)   _  = return x
 sampleDelayed (SNT _ x _) _  = return x
 sampleDelayed (SNE s _ _) dt = signalValue s dt
 sampleDelayed sn          dt = sample sn dt
@@ -340,9 +345,7 @@ sampleDelayed sn          dt = sample sn dt
 -- ** Userland primitives
 
 {-| Advancing the whole network that the given signal depends on by
-the amount of time given in the second argument. Note that the shared
-'time' signal is also advanced, so this function should only be used
-for sampling the top level. -}
+the amount of time given in the second argument. -}
 
 superstep :: Signal a -- ^ the top-level signal
           -> DTime    -- ^ the amount of time to advance
@@ -352,17 +355,19 @@ superstep world dt = do
   commit world
   return snapshot
 
-{-| A pure stateful signal. -}
+{-| A pure stateful signal.  The initial state is the first output. -}
 
 stateful :: a                 -- ^ initial state
          -> (DTime -> a -> a) -- ^ state transformation
          -> Signal a
 stateful x0 f = createSignal (SNS x0 f)
 
-{-| A stateful transfer function.  The current input can only affect
-the next output, i.e. there is an implicit delay. -}
+{-| A stateful transfer function.  The current input affects the
+current output, i.e. the initial state given in the first argument is
+considered to appear before the first output, and can only be directly
+observed by the `sampleDelayed` function. -}
 
-transfer :: a                      -- ^ initial state
+transfer :: a                      -- ^ initial internal state
          -> (DTime -> t -> a -> a) -- ^ state updater function
          -> Signal t               -- ^ input signal
          -> Signal a

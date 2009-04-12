@@ -32,10 +32,43 @@ module FRP.Elerea (
   Sink,
   Signal,
   superstep,
-  stateful,
-  transfer,
-  latcher,
-  external
+  stateful, transfer, latcher, external,
+  delay, edge,
+  (==@), (/=@), (&&@), (||@)
 ) where
 
+import Control.Applicative
 import FRP.Elerea.Internal
+
+{-| The `delay` transfer function emits the value of a signal from the
+previous superstep, starting with the filler value `v0`. -}
+
+delay :: a -> Signal a -> Signal a
+delay v0 s = snd <$> transfer (v0,undefined) (\_ v' (v,_) -> (v',v)) s
+
+{-| The `edge` transfer function takes a bool signal and emits another
+bool signal that turns true only at the moment when there is a rising
+edge on the input. -}
+
+edge :: Signal Bool -> Signal Bool
+edge b = (not <$> delay True b) &&@ b
+
+{-| Point-wise equality of two signals. -}
+
+(==@) :: Eq a => Signal a -> Signal a -> Signal Bool
+(==@) = liftA2 (==)
+
+{-| Point-wise inequality of two signals. -}
+
+(/=@) :: Eq a => Signal a -> Signal a -> Signal Bool
+(/=@) = liftA2 (/=)
+
+{-| Point-wise OR of two boolean signals. -}
+
+(||@) :: Signal Bool -> Signal Bool -> Signal Bool
+(||@) = liftA2 (||)
+
+{-| Point-wise AND of two boolean signals. -}
+
+(&&@) :: Signal Bool -> Signal Bool -> Signal Bool
+(&&@) = liftA2 (&&)
