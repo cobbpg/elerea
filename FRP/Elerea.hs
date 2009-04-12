@@ -23,7 +23,9 @@ any 'Fractional' signal looks like this:
  integral x0 s = transfer x0 (\\dt x x0 -> x0+x*realToFrac dt) s
 @
 
-Head to "FRP.Elerea.Internal" for the implementation details.
+Head to "FRP.Elerea.Internal" for the implementation details.  To get
+a general idea how to use the library, check out the sources in the
+@elerea-examples@ package.
 
 -}
 
@@ -34,11 +36,16 @@ module FRP.Elerea (
   superstep,
   stateful, transfer, latcher, external,
   delay, edge,
-  (==@), (/=@), (&&@), (||@)
+  (==@), (/=@), (<@), (<=@), (>=@), (>@),
+  (&&@), (||@)
 ) where
 
 import Control.Applicative
 import FRP.Elerea.Internal
+
+infix  4 ==@, /=@, <@, <=@, >=@, >@
+infixr 3 &&@
+infixr 2 ||@
 
 {-| The `delay` transfer function emits the value of a signal from the
 previous superstep, starting with the filler value `v0`. -}
@@ -62,6 +69,26 @@ edge b = (not <$> delay True b) &&@ b
 
 (/=@) :: Eq a => Signal a -> Signal a -> Signal Bool
 (/=@) = liftA2 (/=)
+
+{-| Point-wise comparison of two signals. -}
+
+(<@) :: Ord a => Signal a -> Signal a -> Signal Bool
+(<@) = liftA2 (<)
+
+{-| Point-wise comparison of two signals. -}
+
+(<=@) :: Ord a => Signal a -> Signal a -> Signal Bool
+(<=@) = liftA2 (<=)
+
+{-| Point-wise comparison of two signals. -}
+
+(>=@) :: Ord a => Signal a -> Signal a -> Signal Bool
+(>=@) = liftA2 (>=)
+
+{-| Point-wise comparison of two signals. -}
+
+(>@) :: Ord a => Signal a -> Signal a -> Signal Bool
+(>@) = liftA2 (>)
 
 {-| Point-wise OR of two boolean signals. -}
 

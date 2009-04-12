@@ -205,7 +205,7 @@ instance Applicative Signal where
 instance Show (Signal a) where
     showsPrec _ _ s = "<SIGNAL>" ++ s
 
-{-| The equality test checks whether to signals are physically the same. -}
+{-| The equality test checks whether two signals are physically the same. -}
 
 instance Eq (Signal a) where
     S s1 == S s2 = s1 == s2
@@ -223,6 +223,26 @@ instance Fractional t => Fractional (Signal t) where
     (/) = liftA2 (/)
     recip = fmap recip
     fromRational = pure . fromRational
+
+instance Floating t => Floating (Signal t) where
+    pi = pure pi
+    exp = fmap exp
+    sqrt = fmap sqrt
+    log = fmap log
+    (**) = liftA2 (**)
+    logBase = liftA2 logBase
+    sin = fmap sin
+    tan = fmap tan
+    cos = fmap cos
+    asin = fmap asin
+    atan = fmap atan
+    acos = fmap acos
+    sinh = fmap sinh
+    tanh = fmap tanh
+    cosh = fmap cosh
+    asinh = fmap asinh
+    atanh = fmap atanh
+    acosh = fmap acosh
 
 -- ** Internal functions to run the network
 
@@ -334,7 +354,7 @@ dependency loops.  Transfer functions simply return their previous
 output, while latchers postpone the change and pass through the
 current value of their current signal even if the latch control signal
 is true at the moment.  Other types of signals are always handled by
-the `signal` function, so it is not possible to create a stateful loop
+the `sample` function, so it is not possible to create a stateful loop
 composed of solely stateless combinators. -}
 
 sampleDelayed :: SignalNode a -> DTime -> IO a
@@ -349,7 +369,7 @@ the amount of time given in the second argument. -}
 
 superstep :: Signal a -- ^ the top-level signal
           -> DTime    -- ^ the amount of time to advance
-          -> IO a     -- ^ the value of the signal before the update
+          -> IO a     -- ^ the current value of the signal
 superstep world dt = do
   snapshot <- signalValue world dt
   commit world
