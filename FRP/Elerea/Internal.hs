@@ -395,7 +395,9 @@ transfer x0 f s = createSignal (SNT s x0 f)
 
 {-| Reactive signal that starts out as @s@ and can change its
 behaviour to the one supplied in @ss@ whenever @e@ is true. The change
-can only be observed in the next instant. -}
+can be observed immediately, unless the signal is sampled by
+`sampleDelayed`, which puts a delay on the latch control (but not on
+the latched signal!). -}
 
 latcher :: Signal a          -- ^ @s@: initial behaviour
         -> Signal Bool       -- ^ @e@: latch control signal
