@@ -1,0 +1,11 @@
+0.?.? - xxxxxx
+* documentation bug fixed: the latcher is not delayed
+
+0.2.0 - 090412
+* removed primitives time and stateless
+* removed default delay on stateful combinators and added experimental cycle detection
+* added some non-primitive combinators: delay, edge, comparisons, logic relations
+* added signal instances for various numeric classes
+
+0.1.0 - 090410
+* first public version
