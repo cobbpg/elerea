@@ -84,17 +84,17 @@ insertSignal st p (SNL5 _ s1 s2 s3 s4 s5) = do
 
 nodeLabel :: (Maybe Id,SignalInfo) -> [Char]
 nodeLabel (i,node) = case node of
-                       Const           -> "pure"
+                       Const           -> "const"
                        Stateful        -> "stateful"
                        Transfer _      -> "transfer"
                        App _ _         -> "app"
                        Latcher _ _ _   -> "latcher"
                        External        -> "external"
-                       Lift1 _         -> "lift1"
-                       Lift2 _ _       -> "lift2"
-                       Lift3 _ _ _     -> "lift3"
-                       Lift4 _ _ _ _   -> "lift4"
-                       Lift5 _ _ _ _ _ -> "lift5"
+                       Lift1 _         -> "fun1"
+                       Lift2 _ _       -> "fun2"
+                       Lift3 _ _ _     -> "fun3"
+                       Lift4 _ _ _ _   -> "fun4"
+                       Lift5 _ _ _ _ _ -> "fun5"
                        None            -> "NONE"
                      ++ (maybe "" show i)
 
@@ -103,18 +103,18 @@ signalToDot sig = do
   (_,st) <- buildStore Map.empty sig
   putStrLn "digraph G {"
   forM_ (Map.assocs st) $ \(ix,n) -> do
-    let mkl t = " [label=" ++ t ++ "];"
+    let mkl t e = " [label=" ++ t ++ (if e then ",dir=back" else "") ++ "];"
         rd i = (Just i,st Map.! i)
         erule s l = putStrLn $ "  " ++ nodeLabel (Just ix,n) ++
-                               " -> " ++ nodeLabel (rd s) ++ mkl l
-    putStrLn $ "  " ++ nodeLabel (Just ix,n) ++ mkl (nodeLabel (Nothing,n))
+                               " -> " ++ nodeLabel (rd s) ++ mkl l True
+    putStrLn $ "  " ++ nodeLabel (Just ix,n) ++ mkl (nodeLabel (Nothing,n)) False
     case n of
-      Transfer s           -> do erule s  ""
+      Transfer s           -> do erule s  "\"\""
       App sf sx            -> do erule sf "f"
                                  erule sx "x"
       Latcher s e ss       -> do erule s  "init"
                                  erule e  "ctl"
-                                 erule ss "in"
+                                 erule ss "\"\""
       Lift1 s1             -> do erule s1 "x1"
       Lift2 s1 s2          -> do erule s1 "x1"
                                  erule s2 "x2"
