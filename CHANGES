@@ -1,5 +1,6 @@
-0.?.? - xxxxxx
+0.3.0 - xxxxxx
 * documentation bug fixed: the latcher is not delayed
+* added dot (graphviz) converter
 
 0.2.0 - 090412
 * removed primitives time and stateless
