@@ -1,4 +1,11 @@
 {-# LANGUAGE ExistentialQuantification #-}
+{-# OPTIONS_GHC -fno-warn-name-shadowing #-}
+
+{-|
+
+This module provides some means to visualise the signal structure.
+
+-}
 
 module FRP.Elerea.Graph (signalToDot) where
 
@@ -82,54 +89,66 @@ insertSignal st p (SNL5 _ s1 s2 s3 s4 s5) = do
   (s5',st''''') <- buildStore st'''' s5
   return (Map.insert p (Lift5 s1' s2' s3' s4' s5') st''''')
 
-nodeLabel :: (Maybe Id,SignalInfo) -> [Char]
-nodeLabel (i,node) = case node of
-                       Const           -> "const"
-                       Stateful        -> "stateful"
-                       Transfer _      -> "transfer"
-                       App _ _         -> "app"
-                       Latcher _ _ _   -> "latcher"
-                       External        -> "external"
-                       Lift1 _         -> "fun1"
-                       Lift2 _ _       -> "fun2"
-                       Lift3 _ _ _     -> "fun3"
-                       Lift4 _ _ _ _   -> "fun4"
-                       Lift5 _ _ _ _ _ -> "fun5"
-                       None            -> "NONE"
-                     ++ (maybe "" show i)
+nodeLabel :: Maybe Id -> SignalInfo -> [Char]
+nodeLabel id node = case node of
+                      Const           -> "const"
+                      Stateful        -> "stateful"
+                      Transfer _      -> "transfer"
+                      App _ _         -> "app"
+                      Latcher _ _ _   -> "latcher"
+                      External        -> "external"
+                      Lift1 _         -> "fun1"
+                      Lift2 _ _       -> "fun2"
+                      Lift3 _ _ _     -> "fun3"
+                      Lift4 _ _ _ _   -> "fun4"
+                      Lift5 _ _ _ _ _ -> "fun5"
+                      None            -> "NONE"
+                    ++ (maybe "" show id)
 
-signalToDot :: Signal a -> IO SignalStore
-signalToDot sig = do
-  (_,st) <- buildStore Map.empty sig
-  putStrLn "digraph G {"
-  forM_ (Map.assocs st) $ \(ix,n) -> do
-    let mkl t e = " [label=" ++ t ++ (if e then ",dir=back" else "") ++ "];"
-        rd i = (Just i,st Map.! i)
-        erule s l = putStrLn $ "  " ++ nodeLabel (Just ix,n) ++
-                               " -> " ++ nodeLabel (rd s) ++ mkl l True
-    putStrLn $ "  " ++ nodeLabel (Just ix,n) ++ mkl (nodeLabel (Nothing,n)) False
-    case n of
-      Transfer s           -> do erule s  "\"\""
-      App sf sx            -> do erule sf "f"
-                                 erule sx "x"
-      Latcher s e ss       -> do erule s  "init"
-                                 erule e  "ctl"
-                                 erule ss "\"\""
-      Lift1 s1             -> do erule s1 "x1"
-      Lift2 s1 s2          -> do erule s1 "x1"
-                                 erule s2 "x2"
-      Lift3 s1 s2 s3       -> do erule s1 "x1"
-                                 erule s2 "x2"
-                                 erule s3 "x3"
-      Lift4 s1 s2 s3 s4    -> do erule s1 "x1"
-                                 erule s2 "x2"
-                                 erule s3 "x3"
-                                 erule s4 "x4"
-      Lift5 s1 s2 s3 s4 s5 -> do erule s1 "x1"
-                                 erule s2 "x2"
-                                 erule s3 "x3"
-                                 erule s4 "x4"
-                                 erule s5 "x5"
-      _                    -> return ()
-  putStrLn "}"
-  return st
+{-|
+
+Traversing the network starting from the given signal and converting
+it into a string containing the graph in Graphviz
+(<http://www.graphviz.org/>) dot format.  Stateful nodes are coloured
+according to their type.
+
+Because of the fact that Elerea primitives are not referentially
+transparent, the results might differ depending on whether this
+function is called before or after sampling (this also affects the
+actual network!), but the networks should be still equivalent.
+
+-}
+
+signalToDot :: Signal a -> IO String
+signalToDot s = do
+  (_,st) <- buildStore Map.empty s
+  let rules = map mkRule (Map.assocs st)
+      mkRule (id,n) = "  " ++ name ++ attrs ++ edges
+          where name = nodeLabel (Just id) n
+                attrs = mkLabel (nodeLabel Nothing n) ("style=filled,fillcolor=\"#" ++ nodeCol ++ "\",shape=" ++ nodeShape)
+                edges = case n of
+                  Transfer s           -> mkEdge s "\"\""
+                  App sf sx            -> mkEdge sf "f" ++ mkEdge sx "x"
+                  Latcher s e ss       -> mkEdge s "init" ++ mkEdge e  "ctl" ++ mkEdge ss "\"\""
+                  Lift1 s1             -> mkEdge s1 "x1"
+                  Lift2 s1 s2          -> mkEdge s1 "x1" ++ mkEdge s2 "x2"
+                  Lift3 s1 s2 s3       -> mkEdge s1 "x1" ++ mkEdge s2 "x2" ++ mkEdge s3 "x3"
+                  Lift4 s1 s2 s3 s4    -> mkEdge s1 "x1" ++ mkEdge s2 "x2" ++ mkEdge s3 "x3" ++ mkEdge s4 "x4"
+                  Lift5 s1 s2 s3 s4 s5 -> mkEdge s1 "x1" ++ mkEdge s2 "x2" ++ mkEdge s3 "x3" ++ mkEdge s4 "x4" ++ mkEdge s5 "x5"
+                  _                    -> ""
+                mkEdge endId label = "  " ++ name ++ " -> " ++
+                                     nodeLabel (Just endId) (st Map.! endId) ++
+                                     mkLabel label "dir=back"
+                mkLabel name attrs = " [label=" ++ name ++ "," ++ attrs ++ "];\n"
+                nodeCol = case n of
+                  Transfer _    -> "ffcc99"
+                  Latcher _ _ _ -> "99ccff"
+                  External      -> "ccff99"
+                  Stateful      -> "ffffcc"
+                  _             -> "ffffff"
+                nodeShape = case n of
+                  Transfer _    -> "diamond"
+                  Latcher _ _ _ -> "hexagon"
+                  External      -> "invtriangle"
+                  _             -> "ellipse"
+  return $ "digraph G {\n" ++ concat rules ++ "}\n"
