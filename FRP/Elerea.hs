@@ -33,7 +33,7 @@ module FRP.Elerea (
   Time, DTime,
   Sink,
   Signal,
-  superstep, keepAlive,
+  superstep, keepAlive, (.@.),
   stateful, transfer, latcher, external,
   delay, edge,
   (==@), (/=@), (<@), (<=@), (>=@), (>@),
@@ -46,6 +46,11 @@ import FRP.Elerea.Internal
 infix  4 ==@, /=@, <@, <=@, >=@, >@
 infixr 3 &&@
 infixr 2 ||@
+
+{-| A short alternative name for keepAlive. -}
+
+(.@.) :: Signal a -> Signal t -> Signal a
+(.@.) = keepAlive
 
 {-| The `delay` transfer function emits the value of a signal from the
 previous superstep, starting with the filler value given in the first

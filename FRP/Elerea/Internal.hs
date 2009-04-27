@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification, Rank2Types #-}
+{-# LANGUAGE ExistentialQuantification #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 {-|
@@ -73,10 +73,6 @@ type Sink a = a -> IO ()
 
 newtype Signal a = S (IORef (SignalTrans a))
 
-{-| A signal of unknown type. -}
-
-newtype AnySignal = AS (forall a . Signal a)
-
 {-| A node can have four states that distinguish various stages of
 sampling and aging. -}
 
@@ -115,8 +111,8 @@ data SignalNode a
     | SNE (Signal a) (Signal Bool) (Signal (Signal a))
     -- | @SNR r@: opaque reference to connect peripherals
     | SNR (IORef a)
-    -- | @SNKA s l@: equivalent to @s@ while aging each signal in @l@
-    | SNKA (Signal a) [AnySignal]
+    -- | @SNKA s l@: equivalent to @s@ while aging signal @l@
+    | forall t . SNKA (Signal a) (Signal t)
     -- | @SNL1 f@: @fmap f@
     | forall t . SNL1 (t -> a) (Signal t)
     -- | @SNL2 f@: @liftA2 f@
@@ -315,7 +311,7 @@ commit (S s) = do
                       SNL4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4
                       SNL5 _ s1 s2 s3 s4 s5 -> commit s1 >> commit s2 >> commit s3 >> commit s4 >> commit s5
                       SNE s e ss            -> commit s >> commit e >> commit ss
-                      SNKA s l              -> commit s >> mapM_ (\(AS s) -> commit s) l
+                      SNKA s l              -> commit s >> commit l
                       _                     -> return ()
     Ready _   -> return () 
     _         -> error "Inconsistent state: signal not aged!"
@@ -350,7 +346,7 @@ sample (SNE s e ss)            dt = do b <- signalValue e dt
                                        s' <- signalValue ss dt
                                        signalValue (if b then s' else s) dt
 sample (SNR r)                 _  = readIORef r
-sample (SNKA s l)              dt = do mapM_ (\(AS s) -> signalValue s dt) l
+sample (SNKA s l)              dt = do signalValue l dt
                                        signalValue s dt
 sample (SNL1 f s)              dt = f <$> signalValue s dt
 sample (SNL2 f s1 s2)          dt = liftM2 f (signalValue s1 dt) (signalValue s2 dt)
@@ -429,7 +425,7 @@ external x0 = do
 necessarily needed to produce the current sample of the first
 argument. -}
 
-keepAlive :: Signal a    -- ^ the actual output
-          -> [AnySignal] -- ^ a list of signals guaranteed to age when this one is sampled
+keepAlive :: Signal a -- ^ the actual output
+          -> Signal t -- ^ a signal guaranteed to age when this one is sampled
           -> Signal a
 keepAlive s l = createSignal (SNKA s l)
