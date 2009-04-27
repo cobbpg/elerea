@@ -33,7 +33,7 @@ module FRP.Elerea (
   Time, DTime,
   Sink,
   Signal,
-  superstep,
+  superstep, keepAlive,
   stateful, transfer, latcher, external,
   delay, edge,
   (==@), (/=@), (<@), (<=@), (>=@), (>@),

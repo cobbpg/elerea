@@ -63,6 +63,9 @@ insertSignal st p (SNE s e ss) = do
   (ss',st''') <- buildStore st'' ss
   return (Map.insert p (Latcher s' e' ss') st''')
 insertSignal st p (SNR _) = return (Map.insert p External st)
+insertSignal st p (SNKA (S r) _) = do
+  Ready s <- readIORef r
+  insertSignal st p s
 insertSignal st p (SNL1 _ s1) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   return (Map.insert p (Lift1 s1') st')
