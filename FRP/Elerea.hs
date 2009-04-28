@@ -52,13 +52,6 @@ infixr 2 ||@
 (.@.) :: Signal a -> Signal t -> Signal a
 (.@.) = keepAlive
 
-{-| The `delay` transfer function emits the value of a signal from the
-previous superstep, starting with the filler value given in the first
-argument. -}
-
-delay :: a -> Signal a -> Signal a
-delay v0 s = snd <$> transfer (v0,v0) (\_ v' (v,_) -> (v',v)) s
-
 {-| The `edge` transfer function takes a bool signal and emits another
 bool signal that turns true only at the moment when there is a rising
 edge on the input. -}

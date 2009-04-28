@@ -1,5 +1,7 @@
 0.4.0 - 0904??
 * added keepAlive
+* made delay a primitive
+* completely separated sampling and aging
 
 0.3.0 - 090419
 * documentation bug fixed: the latcher is not delayed
