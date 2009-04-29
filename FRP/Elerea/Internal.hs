@@ -279,7 +279,6 @@ signalValue (S r) dt = do
                       -- adding a delay to stateful signals. Stateless
                       -- signals should not form a loop, which is
                       -- obvious...
-                      print "delay!"
                       v <- sampleDelayed s dt
                       writeIORef r (Sampled v s)
                       -- Since we are sampling it already, this node
