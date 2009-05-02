@@ -29,6 +29,7 @@ data SignalInfo
     | Latcher Id Id Id
     | External
     | Delay Id
+    | Restarter
     | Lift1 Id
     | Lift2 Id Id
     | Lift3 Id Id Id
@@ -58,37 +59,38 @@ insertSignal st p (SNA sf sx) = do
   (sf',st') <- buildStore (Map.insert p None st) sf
   (sx',st'') <- buildStore st' sx
   return (Map.insert p (App sf' sx') st'')
-insertSignal st p (SNE s e ss) = do
+insertSignal st p (SNL s e ss) = do
   (s',st') <- buildStore (Map.insert p None st) s
   (e',st'') <- buildStore st' e
   (ss',st''') <- buildStore st'' ss
   return (Map.insert p (Latcher s' e' ss') st''')
-insertSignal st p (SNR _) = return (Map.insert p External st)
+insertSignal st p (SNE _) = return (Map.insert p External st)
 insertSignal st p (SND _ s) = do
   (s',st') <- buildStore (Map.insert p None st) s
   return (Map.insert p (Delay s') st')
+insertSignal st p (SNR _) = return (Map.insert p Restarter st)
 insertSignal st p (SNKA (S r) _) = do
   Ready s <- readIORef r
   insertSignal st p s
-insertSignal st p (SNL1 _ s1) = do
+insertSignal st p (SNF1 _ s1) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   return (Map.insert p (Lift1 s1') st')
-insertSignal st p (SNL2 _ s1 s2) = do
+insertSignal st p (SNF2 _ s1 s2) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   (s2',st'') <- buildStore st' s2
   return (Map.insert p (Lift2 s1' s2') st'')
-insertSignal st p (SNL3 _ s1 s2 s3) = do
+insertSignal st p (SNF3 _ s1 s2 s3) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   (s2',st'') <- buildStore st' s2
   (s3',st''') <- buildStore st'' s3
   return (Map.insert p (Lift3 s1' s2' s3') st''')
-insertSignal st p (SNL4 _ s1 s2 s3 s4) = do
+insertSignal st p (SNF4 _ s1 s2 s3 s4) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   (s2',st'') <- buildStore st' s2
   (s3',st''') <- buildStore st'' s3
   (s4',st'''') <- buildStore st''' s4
   return (Map.insert p (Lift4 s1' s2' s3' s4') st'''')
-insertSignal st p (SNL5 _ s1 s2 s3 s4 s5) = do
+insertSignal st p (SNF5 _ s1 s2 s3 s4 s5) = do
   (s1',st') <- buildStore (Map.insert p None st) s1
   (s2',st'') <- buildStore st' s2
   (s3',st''') <- buildStore st'' s3
@@ -104,6 +106,7 @@ nodeLabel id node = case node of
                       App _ _         -> "app"
                       Latcher _ _ _   -> "latcher"
                       External        -> "external"
+                      Restarter       -> "restarter"
                       Delay _         -> "delay"
                       Lift1 _         -> "fun1"
                       Lift2 _ _       -> "fun2"
@@ -160,5 +163,6 @@ signalToDot s = do
                   Latcher _ _ _ -> "hexagon"
                   External      -> "invtriangle"
                   Delay _       -> "box"
+                  Restarter     -> "house"
                   _             -> "ellipse"
   return $ "digraph G {\n" ++ concat rules ++ "}\n"

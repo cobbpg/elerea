@@ -1,4 +1,4 @@
-{-# LANGUAGE ExistentialQuantification #-}
+{-# LANGUAGE ExistentialQuantification, EmptyDataDecls #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 {-|
@@ -24,21 +24,25 @@ network called 'superstep', which takes a signal and a time interval,
 and mutates all the variables the signal depends on.  It is supposed
 to be called repeatedly in a loop that also takes care of user input.
 
-To ensure consistency, a superstep has two phases: evaluation and
-finalisation.  During evaluation, each signal affected is sampled at
-the current point of time ('sample'), advanced by the desired time
-('advance'), and both of these pieces of data are stored in its
+To ensure consistency, a superstep has three phases: sampling, aging
+and finalisation.  Each signal reachable from the top-level signal
+passed to 'superstep' is sampled at the current point of time
+('sample'), and the sample is stored along with the old signal in its
 reference.  If the value of a signal is requested multiple times, the
-sample is simply reused, and no further aging is performed.  After
-successfully sampling the top-level signal, the finalisation process
+sample is simply reused.  After successfully sampling the top-level
+signal, the network is traversed again to advance by the desired time
+('advance'), and when that's completed, the finalisation process
 throws away the intermediate samples and marks the aged signals as the
 current ones, ready to be sampled again.  If there is a dependency
-loop, the system tries to use the `sampleDelayed` function instead of
-`sample` to get a useful value at the problematic spot instead of
-entering an infinite loop.  Evaluation is done by the 'signalValue'
-function, while finalisation is done by 'commit'.  Since these
-functions are invoked recursively on a data structure with existential
-types, their types also need to be explicity quantified.
+loop, the system tries to use the 'sampleDelayed' function instead of
+'sample' to get a useful value at the problematic spot instead of
+entering an infinite loop.  Evaluation is initiated by the
+'signalValue' function (which is used in both the sampling and the
+aging phase to calculate samples and retrieve the cached values if
+they are requested again), aging is performed by 'age', while
+finalisation is done by 'commit'.  Since these functions are invoked
+recursively on a data structure with existential types, their types
+also need to be explicity quantified.
 
 As a bonus, applicative nodes are automatically collapsed into lifted
 functions of up to five arguments.  This optimisation significantly
@@ -59,13 +63,16 @@ import System.IO.Unsafe
 
 {-| Time is continuous.  Nothing fancy. -}
 
-type Time = Double
-
 type DTime = Double
 
 {-| Sinks are used when feeding input into peripheral-bound signals. -}
 
 type Sink a = a -> IO ()
+
+{-| An unpopulated type to use as a token for injecting data
+dependencies in the restarter. -}
+
+data Void
 
 -- ** The data structures behind signals
 
@@ -89,7 +96,7 @@ data SignalTrans a
     | Aged a (SignalNode a)
 
 {-| The possible structures of a node are defined by the 'SignalNode'
-type.  Note that the @SNLx@ nodes are only needed to optimise
+type.  Note that the @SNFx@ nodes are only needed to optimise
 applicatives, they can all be expressed in terms of @SNK@ and
 @SNA@. -}
 
@@ -104,25 +111,27 @@ data SignalNode a
     | forall t . SNT (Signal t) a (DTime -> t -> a -> a)
     -- | @SNA sf sx@: pointwise function application
     | forall t . SNA (Signal (t -> a)) (Signal t)
-    -- | @SNE s e ss@: latcher that starts out as @s@ and becomes the
+    -- | @SNL s e ss@: latcher that starts out as @s@ and becomes the
     -- current value of @ss@ at every moment when @e@ is true
-    | SNE (Signal a) (Signal Bool) (Signal (Signal a))
-    -- | @SNR r@: opaque reference to connect peripherals
-    | SNR (IORef a)
+    | SNL (Signal a) (Signal Bool) (Signal (Signal a))
+    -- | @SNE r@: opaque reference to connect peripherals
+    | SNE (IORef a)
     -- | @SND s@: the @s@ signal delayed by one superstep
     | SND a (Signal a)
+    -- | @SNR f@: restarter; always reevaluates @f undefined@
+    | SNR (Void -> a)
     -- | @SNKA s l@: equivalent to @s@ while aging signal @l@
     | forall t . SNKA (Signal a) (Signal t)
-    -- | @SNL1 f@: @fmap f@
-    | forall t . SNL1 (t -> a) (Signal t)
-    -- | @SNL2 f@: @liftA2 f@
-    | forall t1 t2 . SNL2 (t1 -> t2 -> a) (Signal t1) (Signal t2)
-    -- | @SNL3 f@: @liftA3 f@
-    | forall t1 t2 t3 . SNL3 (t1 -> t2 -> t3 -> a) (Signal t1) (Signal t2) (Signal t3)
-    -- | @SNL4 f@: @liftA4 f@
-    | forall t1 t2 t3 t4 . SNL4 (t1 -> t2 -> t3 -> t4 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4)
-    -- | @SNL5 f@: @liftA5 f@
-    | forall t1 t2 t3 t4 t5 . SNL5 (t1 -> t2 -> t3 -> t4 -> t5 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4) (Signal t5)
+    -- | @SNF1 f@: @fmap f@
+    | forall t . SNF1 (t -> a) (Signal t)
+    -- | @SNF2 f@: @liftA2 f@
+    | forall t1 t2 . SNF2 (t1 -> t2 -> a) (Signal t1) (Signal t2)
+    -- | @SNF3 f@: @liftA3 f@
+    | forall t1 t2 t3 . SNF3 (t1 -> t2 -> t3 -> a) (Signal t1) (Signal t2) (Signal t3)
+    -- | @SNF4 f@: @liftA4 f@
+    | forall t1 t2 t3 t4 . SNF4 (t1 -> t2 -> t3 -> t4 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4)
+    -- | @SNF5 f@: @liftA5 f@
+    | forall t1 t2 t3 t4 t5 . SNF5 (t1 -> t2 -> t3 -> t4 -> t5 -> a) (Signal t1) (Signal t2) (Signal t3) (Signal t4) (Signal t5)
 
 {-| You can uncomment the verbose version of this function to see the
 applicative optimisations in action. -}
@@ -162,41 +171,41 @@ instance Applicative Signal where
           Ready nx <- readIORef rx
           case (nf,nx) of
             (SNK g,SNK y)                  -> debugLog "merge_00" $ opt (SNK (g y))
-            (SNK g,SNL1 h y1)              -> debugLog "merge_01" $ opt (SNL1 (g.h) y1)
-            (SNK g,SNL2 h y1 y2)           -> debugLog "merge_02" $ opt (SNL2 (\y1 y2 -> g (h y1 y2)) y1 y2)
-            (SNK g,SNL3 h y1 y2 y3)        -> debugLog "merge_03" $ opt (SNL3 (\y1 y2 y3 -> g (h y1 y2 y3)) y1 y2 y3)
-            (SNK g,SNL4 h y1 y2 y3 y4)     -> debugLog "merge_04" $ opt (SNL4 (\y1 y2 y3 y4 -> g (h y1 y2 y3 y4)) y1 y2 y3 y4)
-            (SNK g,SNL5 h y1 y2 y3 y4 y5)  -> debugLog "merge_05" $ opt (SNL5 (\y1 y2 y3 y4 y5 -> g (h y1 y2 y3 y4 y5)) y1 y2 y3 y4 y5)
-            (SNK g,_)                      -> debugLog "lift_1x" $ opt (SNL1 g x)
-            (SNL1 g x1,SNK y)              -> debugLog "merge_10" $ opt (SNL1 (\x1 -> g x1 y) x1)
-            (SNL1 g x1,SNL1 h y1)          -> debugLog "merge_11" $ opt (SNL2 (\x1 y1 -> g x1 (h y1)) x1 y1)
-            (SNL1 g x1,SNL2 h y1 y2)       -> debugLog "merge_12" $ opt (SNL3 (\x1 y1 y2 -> g x1 (h y1 y2)) x1 y1 y2)
-            (SNL1 g x1,SNL3 h y1 y2 y3)    -> debugLog "merge_13" $ opt (SNL4 (\x1 y1 y2 y3 -> g x1 (h y1 y2 y3)) x1 y1 y2 y3)
-            (SNL1 g x1,SNL4 h y1 y2 y3 y4) -> debugLog "merge_14" $ opt (SNL5 (\x1 y1 y2 y3 y4 -> g x1 (h y1 y2 y3 y4)) x1 y1 y2 y3 y4)
-            (SNL1 g x1,_)                  -> debugLog "lift_2x" $ opt (SNL2 g x1 x)
-            (SNL2 g x1 x2,SNK y)           -> debugLog "merge_20" $ opt (SNL2 (\x1 x2 -> g x1 x2 y) x1 x2)
-            (SNL2 g x1 x2,SNL1 h y1)       -> debugLog "merge_21" $ opt (SNL3 (\x1 x2 y1 -> g x1 x2 (h y1)) x1 x2 y1)
-            (SNL2 g x1 x2,SNL2 h y1 y2)    -> debugLog "merge_22" $ opt (SNL4 (\x1 x2 y1 y2 -> g x1 x2 (h y1 y2)) x1 x2 y1 y2)
-            (SNL2 g x1 x2,SNL3 h y1 y2 y3) -> debugLog "merge_23" $ opt (SNL5 (\x1 x2 y1 y2 y3 -> g x1 x2 (h y1 y2 y3)) x1 x2 y1 y2 y3)
-            (SNL2 g x1 x2,_)               -> debugLog "lift_3x" $ opt (SNL3 g x1 x2 x)
-            (SNL3 g x1 x2 x3,SNK y)        -> debugLog "merge_30" $ opt (SNL3 (\x1 x2 x3 -> g x1 x2 x3 y) x1 x2 x3)
-            (SNL3 g x1 x2 x3,SNL1 h y1)    -> debugLog "merge_31" $ opt (SNL4 (\x1 x2 x3 y1 -> g x1 x2 x3 (h y1)) x1 x2 x3 y1)
-            (SNL3 g x1 x2 x3,SNL2 h y1 y2) -> debugLog "merge_32" $ opt (SNL5 (\x1 x2 x3 y1 y2 -> g x1 x2 x3 (h y1 y2)) x1 x2 x3 y1 y2)
-            (SNL3 g x1 x2 x3,_)            -> debugLog "lift_4x" $ opt (SNL4 g x1 x2 x3 x)
-            (SNL4 g x1 x2 x3 x4,SNK y)     -> debugLog "merge_40" $ opt (SNL4 (\x1 x2 x3 x4 -> g x1 x2 x3 x4 y) x1 x2 x3 x4)
-            (SNL4 g x1 x2 x3 x4,SNL1 h y1) -> debugLog "merge_41" $ opt (SNL5 (\x1 x2 x3 x4 y1 -> g x1 x2 x3 x4 (h y1)) x1 x2 x3 x4 y1)
-            (SNL4 g x1 x2 x3 x4,_)         -> debugLog "lift_5x" $ opt (SNL5 g x1 x2 x3 x4 x)
-            (SNL5 g x1 x2 x3 x4 x5,SNK y)  -> debugLog "merge_50" $ opt (SNL5 (\x1 x2 x3 x4 x5 -> g x1 x2 x3 x4 x5 y) x1 x2 x3 x4 x5)
+            (SNK g,SNF1 h y1)              -> debugLog "merge_01" $ opt (SNF1 (g.h) y1)
+            (SNK g,SNF2 h y1 y2)           -> debugLog "merge_02" $ opt (SNF2 (\y1 y2 -> g (h y1 y2)) y1 y2)
+            (SNK g,SNF3 h y1 y2 y3)        -> debugLog "merge_03" $ opt (SNF3 (\y1 y2 y3 -> g (h y1 y2 y3)) y1 y2 y3)
+            (SNK g,SNF4 h y1 y2 y3 y4)     -> debugLog "merge_04" $ opt (SNF4 (\y1 y2 y3 y4 -> g (h y1 y2 y3 y4)) y1 y2 y3 y4)
+            (SNK g,SNF5 h y1 y2 y3 y4 y5)  -> debugLog "merge_05" $ opt (SNF5 (\y1 y2 y3 y4 y5 -> g (h y1 y2 y3 y4 y5)) y1 y2 y3 y4 y5)
+            (SNK g,_)                      -> debugLog "lift_1x" $ opt (SNF1 g x)
+            (SNF1 g x1,SNK y)              -> debugLog "merge_10" $ opt (SNF1 (\x1 -> g x1 y) x1)
+            (SNF1 g x1,SNF1 h y1)          -> debugLog "merge_11" $ opt (SNF2 (\x1 y1 -> g x1 (h y1)) x1 y1)
+            (SNF1 g x1,SNF2 h y1 y2)       -> debugLog "merge_12" $ opt (SNF3 (\x1 y1 y2 -> g x1 (h y1 y2)) x1 y1 y2)
+            (SNF1 g x1,SNF3 h y1 y2 y3)    -> debugLog "merge_13" $ opt (SNF4 (\x1 y1 y2 y3 -> g x1 (h y1 y2 y3)) x1 y1 y2 y3)
+            (SNF1 g x1,SNF4 h y1 y2 y3 y4) -> debugLog "merge_14" $ opt (SNF5 (\x1 y1 y2 y3 y4 -> g x1 (h y1 y2 y3 y4)) x1 y1 y2 y3 y4)
+            (SNF1 g x1,_)                  -> debugLog "lift_2x" $ opt (SNF2 g x1 x)
+            (SNF2 g x1 x2,SNK y)           -> debugLog "merge_20" $ opt (SNF2 (\x1 x2 -> g x1 x2 y) x1 x2)
+            (SNF2 g x1 x2,SNF1 h y1)       -> debugLog "merge_21" $ opt (SNF3 (\x1 x2 y1 -> g x1 x2 (h y1)) x1 x2 y1)
+            (SNF2 g x1 x2,SNF2 h y1 y2)    -> debugLog "merge_22" $ opt (SNF4 (\x1 x2 y1 y2 -> g x1 x2 (h y1 y2)) x1 x2 y1 y2)
+            (SNF2 g x1 x2,SNF3 h y1 y2 y3) -> debugLog "merge_23" $ opt (SNF5 (\x1 x2 y1 y2 y3 -> g x1 x2 (h y1 y2 y3)) x1 x2 y1 y2 y3)
+            (SNF2 g x1 x2,_)               -> debugLog "lift_3x" $ opt (SNF3 g x1 x2 x)
+            (SNF3 g x1 x2 x3,SNK y)        -> debugLog "merge_30" $ opt (SNF3 (\x1 x2 x3 -> g x1 x2 x3 y) x1 x2 x3)
+            (SNF3 g x1 x2 x3,SNF1 h y1)    -> debugLog "merge_31" $ opt (SNF4 (\x1 x2 x3 y1 -> g x1 x2 x3 (h y1)) x1 x2 x3 y1)
+            (SNF3 g x1 x2 x3,SNF2 h y1 y2) -> debugLog "merge_32" $ opt (SNF5 (\x1 x2 x3 y1 y2 -> g x1 x2 x3 (h y1 y2)) x1 x2 x3 y1 y2)
+            (SNF3 g x1 x2 x3,_)            -> debugLog "lift_4x" $ opt (SNF4 g x1 x2 x3 x)
+            (SNF4 g x1 x2 x3 x4,SNK y)     -> debugLog "merge_40" $ opt (SNF4 (\x1 x2 x3 x4 -> g x1 x2 x3 x4 y) x1 x2 x3 x4)
+            (SNF4 g x1 x2 x3 x4,SNF1 h y1) -> debugLog "merge_41" $ opt (SNF5 (\x1 x2 x3 x4 y1 -> g x1 x2 x3 x4 (h y1)) x1 x2 x3 x4 y1)
+            (SNF4 g x1 x2 x3 x4,_)         -> debugLog "lift_5x" $ opt (SNF5 g x1 x2 x3 x4 x)
+            (SNF5 g x1 x2 x3 x4 x5,SNK y)  -> debugLog "merge_50" $ opt (SNF5 (\x1 x2 x3 x4 x5 -> g x1 x2 x3 x4 x5 y) x1 x2 x3 x4 x5)
             _                              -> return ()
           return True
 
         -- Lifting into higher arity not knowing the argument
         when (not merged) $ case nf of
-          SNK g              -> debugLog "lift_1" $ opt (SNL1 g x)
-          SNL1 g x1          -> debugLog "lift_2" $ opt (SNL2 g x1 x)
-          SNL2 g x1 x2       -> debugLog "lift_3" $ opt (SNL3 g x1 x2 x)
-          SNL3 g x1 x2 x3    -> debugLog "lift_4" $ opt (SNL4 g x1 x2 x3 x)
-          SNL4 g x1 x2 x3 x4 -> debugLog "lift_5" $ opt (SNL5 g x1 x2 x3 x4 x)
+          SNK g              -> debugLog "lift_1" $ opt (SNF1 g x)
+          SNF1 g x1          -> debugLog "lift_2" $ opt (SNF2 g x1 x)
+          SNF2 g x1 x2       -> debugLog "lift_3" $ opt (SNF3 g x1 x2 x)
+          SNF3 g x1 x2 x3    -> debugLog "lift_4" $ opt (SNF4 g x1 x2 x3 x)
+          SNF4 g x1 x2 x3 x4 -> debugLog "lift_5" $ opt (SNF5 g x1 x2 x3 x4 x)
           _                  -> return ()
 
       -- The final version
@@ -300,14 +309,14 @@ age (S r) dt = do
                       case s' of
                         SNT s _ _             -> age s dt
                         SNA sf sx             -> age sf dt >> age sx dt
-                        SNE s e ss            -> age s dt >> age e dt >> age ss dt
+                        SNL s e ss            -> age s dt >> age e dt >> age ss dt
                         SND _ s               -> age s dt 
                         SNKA s l              -> age s dt >> age l dt
-                        SNL1 _ s              -> age s dt 
-                        SNL2 _ s1 s2          -> age s1 dt >> age s2 dt
-                        SNL3 _ s1 s2 s3       -> age s1 dt >> age s2 dt >> age s3 dt
-                        SNL4 _ s1 s2 s3 s4    -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt
-                        SNL5 _ s1 s2 s3 s4 s5 -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt >> age s5 dt
+                        SNF1 _ s              -> age s dt 
+                        SNF2 _ s1 s2          -> age s1 dt >> age s2 dt
+                        SNF3 _ s1 s2 s3       -> age s1 dt >> age s2 dt >> age s3 dt
+                        SNF4 _ s1 s2 s3 s4    -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt
+                        SNF5 _ s1 s2 s3 s4 s5 -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt >> age s5 dt
                         _                     -> return ()
     Aged _ _    -> return () 
     _           -> error "Inconsistent state: signal not sampled properly!"
@@ -323,14 +332,14 @@ commit (S r) = do
                    case s of
                      SNT s _ _             -> commit s
                      SNA sf sx             -> commit sf >> commit sx
-                     SNE s e ss            -> commit s >> commit e >> commit ss
+                     SNL s e ss            -> commit s >> commit e >> commit ss
                      SND _ s               -> commit s 
                      SNKA s l              -> commit s >> commit l
-                     SNL1 _ s              -> commit s 
-                     SNL2 _ s1 s2          -> commit s1 >> commit s2
-                     SNL3 _ s1 s2 s3       -> commit s1 >> commit s2 >> commit s3
-                     SNL4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4
-                     SNL5 _ s1 s2 s3 s4 s5 -> commit s1 >> commit s2 >> commit s3 >> commit s4 >> commit s5
+                     SNF1 _ s              -> commit s 
+                     SNF2 _ s1 s2          -> commit s1 >> commit s2
+                     SNF3 _ s1 s2 s3       -> commit s1 >> commit s2 >> commit s3
+                     SNF4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4
+                     SNF5 _ s1 s2 s3 s4 s5 -> commit s1 >> commit s2 >> commit s3 >> commit s4 >> commit s5
                      _                     -> return ()
     Ready _     -> return ()
     _           -> error "Inconsistent state: signal not aged properly!"
@@ -342,11 +351,11 @@ here.  The other nodes are structurally static. -}
 advance :: SignalNode a -> a -> DTime -> IO (SignalNode a)
 advance (SNS x f)       _ dt = x `seq` return (SNS (f dt x) f)
 advance (SNT s _ f)     v _  = v `seq` return (SNT s v f)
-advance sw@(SNE _ e ss) _ dt = do -- These are ready samples!
+advance sw@(SNL _ e ss) _ dt = do -- These are ready samples!
                                   b <- signalValue e dt
                                   s' <- signalValue ss dt
                                   if b
-                                    then return (SNE s' e ss)
+                                    then return (SNL s' e ss)
                                     else return sw
 advance (SND _ s)       _ dt = do x <- signalValue s dt
                                   return (SND x s)
@@ -354,7 +363,7 @@ advance s               _ _  = return s
 
 {-| Sampling the signal at the current moment.  This is where static
 nodes propagate changes to those they depend on.  Transfer functions
-('SNT') and latchers ('SNE') work without delay, i.e. the effects of
+('SNT') and latchers ('SNL') work without delay, i.e. the effects of
 their input signals can be observed in the same superstep. -}
 
 sample :: SignalNode a -> DTime -> IO a
@@ -363,18 +372,19 @@ sample (SNS x _)               _  = return x
 sample (SNT s x f)             dt = do t <- signalValue s dt
                                        return $! f dt t x
 sample (SNA sf sx)             dt = signalValue sf dt <*> signalValue sx dt
-sample (SNE s e ss)            dt = do b <- signalValue e dt
+sample (SNL s e ss)            dt = do b <- signalValue e dt
                                        s' <- signalValue ss dt
                                        signalValue (if b then s' else s) dt
-sample (SNR r)                 _  = readIORef r
+sample (SNE r)                 _  = readIORef r
 sample (SND v _)               _  = return v
+sample (SNR f)                 _  = return (f undefined)
 sample (SNKA s l)              dt = do signalValue l dt
                                        signalValue s dt
-sample (SNL1 f s)              dt = f <$> signalValue s dt
-sample (SNL2 f s1 s2)          dt = liftM2 f (signalValue s1 dt) (signalValue s2 dt)
-sample (SNL3 f s1 s2 s3)       dt = liftM3 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt)
-sample (SNL4 f s1 s2 s3 s4)    dt = liftM4 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt)
-sample (SNL5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt) (signalValue s5 dt)
+sample (SNF1 f s)              dt = f <$> signalValue s dt
+sample (SNF2 f s1 s2)          dt = liftM2 f (signalValue s1 dt) (signalValue s2 dt)
+sample (SNF3 f s1 s2 s3)       dt = liftM3 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt)
+sample (SNF4 f s1 s2 s3 s4)    dt = liftM4 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt)
+sample (SNF5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2 dt) (signalValue s3 dt) (signalValue s4 dt) (signalValue s5 dt)
 
 {-| Sampling the signal with some kind of delay in order to resolve
 dependency loops.  Transfer functions simply return their previous
@@ -386,7 +396,7 @@ composed of solely stateless combinators. -}
 
 sampleDelayed :: SignalNode a -> DTime -> IO a
 sampleDelayed (SNT _ x _) _  = return x
-sampleDelayed (SNE s _ _) dt = signalValue s dt
+sampleDelayed (SNL s _ _) dt = signalValue s dt
 sampleDelayed sn          dt = sample sn dt
 
 -- ** Userland primitives
@@ -431,7 +441,7 @@ latcher :: Signal a          -- ^ @s@: initial behaviour
         -> Signal Bool       -- ^ @e@: latch control signal
         -> Signal (Signal a) -- ^ @ss@: signal of potential future behaviours
         -> Signal a
-latcher s e ss = createSignal (SNE s e ss)
+latcher s e ss = createSignal (SNL s e ss)
 
 {-| A signal that can be directly fed through the sink function
 returned.  This can be used to attach the network to the outer
@@ -441,7 +451,7 @@ external :: a                     -- ^ initial value
          -> IO (Signal a, Sink a) -- ^ the signal and an IO function to feed it
 external x0 = do
   ref <- newIORef x0
-  snr <- newIORef (Ready (SNR ref))
+  snr <- newIORef (Ready (SNE ref))
   return (S snr,writeIORef ref)
 
 {-| The `delay` transfer function emits the value of a signal from the
@@ -449,14 +459,38 @@ previous superstep, starting with the filler value given in the first
 argument.  It has to be a primitive, otherwise it could not be used to
 prevent automatic delays. -}
 
-delay :: a -> Signal a -> Signal a
+delay :: a        -- ^ initial output
+      -> Signal a -- ^ the signal to delay
+      -> Signal a
 delay x0 s = createSignal (SND x0 s)
 
 {-| Dependency injection to allow aging signals whose output is not
 necessarily needed to produce the current sample of the first
-argument. -}
+argument.  It equivalent to @(flip . liftA2 . flip) const@, as it
+evaluates its second argument first. -}
 
 keepAlive :: Signal a -- ^ the actual output
           -> Signal t -- ^ a signal guaranteed to age when this one is sampled
           -> Signal a
 keepAlive s l = createSignal (SNKA s l)
+
+{-| Dependency injection to allow signals to be partly restarted,
+notably the parts synthesised by the function passed to 'restarter'.
+The function receives a dummy value that must not be evaluated (it is
+'undefined'), but the result should depend on it somehow to prevent
+let-floating from memoising the result outside the function.  Such a
+dependency can be established with the '==>' operator.  Effectively,
+'restarter' is a non-memoising version of 'pure' limited to construct
+higher-order signals. -}
+
+restarter :: (Void -> Signal a) -- ^ the function to synthesise signal
+          -> Signal (Signal a)
+restarter f = createSignal (SNR f)
+
+{-| An operator that ignores its first argument and returns the
+second, but hides the fact that the first argument is not needed.  It
+is equivalent to @flip const@, but it cannot be inlined. -}
+
+{-# NOINLINE (==>) #-}
+(==>) :: Void -> a -> a
+_ ==> x = x

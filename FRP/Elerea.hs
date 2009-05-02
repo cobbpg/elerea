@@ -30,12 +30,10 @@ a general idea how to use the library, check out the sources in the
 -}
 
 module FRP.Elerea (
-  Time, DTime,
-  Sink,
-  Signal,
-  superstep, keepAlive, (.@.),
-  stateful, transfer, latcher, external,
-  delay, edge,
+  DTime, Sink, Signal,
+  superstep, external, keepAlive, (.@.),
+  stateful, transfer, latcher, restarter,
+  delay, edge, (==>),
   (==@), (/=@), (<@), (<=@), (>=@), (>@),
   (&&@), (||@)
 ) where
@@ -47,7 +45,7 @@ infix  4 ==@, /=@, <@, <=@, >=@, >@
 infixr 3 &&@
 infixr 2 ||@
 
-{-| A short alternative name for keepAlive. -}
+{-| A short alternative name for 'keepAlive'. -}
 
 (.@.) :: Signal a -> Signal t -> Signal a
 (.@.) = keepAlive
