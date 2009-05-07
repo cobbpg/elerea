@@ -1,3 +1,7 @@
+0.6.0 - 090507
+* renamed Void to StartToken
+* changed restarter to the simpler startTokens
+
 0.5.0 - 090502
 * changed names of internal constructors to match primitives better
 * added restarter and (==>)

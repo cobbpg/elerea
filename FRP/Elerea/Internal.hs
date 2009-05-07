@@ -69,10 +69,10 @@ type DTime = Double
 
 type Sink a = a -> IO ()
 
-{-| An unpopulated type to use as a token for injecting data
-dependencies in the restarter. -}
+{-| An empty type to use as a token for injecting data
+dependencies. -}
 
-data Void
+data StartToken
 
 -- ** The data structures behind signals
 
@@ -118,8 +118,8 @@ data SignalNode a
     | SNE (IORef a)
     -- | @SND s@: the @s@ signal delayed by one superstep
     | SND a (Signal a)
-    -- | @SNR f@: restarter; always reevaluates @f undefined@
-    | SNR (Void -> a)
+    -- | @SNU@: a stream of unique identifiers for each superstep
+    | SNU
     -- | @SNKA s l@: equivalent to @s@ while aging signal @l@
     | forall t . SNKA (Signal a) (Signal t)
     -- | @SNF1 f@: @fmap f@
@@ -377,7 +377,7 @@ sample (SNL s e ss)            dt = do b <- signalValue e dt
                                        signalValue (if b then s' else s) dt
 sample (SNE r)                 _  = readIORef r
 sample (SND v _)               _  = return v
-sample (SNR f)                 _  = return (f undefined)
+sample (SNU)                   _  = return undefined
 sample (SNKA s l)              dt = do signalValue l dt
                                        signalValue s dt
 sample (SNF1 f s)              dt = f <$> signalValue s dt
@@ -474,23 +474,21 @@ keepAlive :: Signal a -- ^ the actual output
           -> Signal a
 keepAlive s l = createSignal (SNKA s l)
 
-{-| Dependency injection to allow signals to be partly restarted,
-notably the parts synthesised by the function passed to 'restarter'.
-The function receives a dummy value that must not be evaluated (it is
-'undefined'), but the result should depend on it somehow to prevent
-let-floating from memoising the result outside the function.  Such a
-dependency can be established with the '==>' operator.  Effectively,
-'restarter' is a non-memoising version of 'pure' limited to construct
-higher-order signals. -}
+{-| A stream of tokens freshly generated in each superstep.  These are
+dummy values that must not be evaluated (they are in fact
+'undefined'), but distributed among signals that need to be
+constructed at the given moment in the absence of other dependencies
+on current values, so as to prevent let-floating from moving otherwise
+independent signals to an outer scope.  Dependency on these tokens can
+be established with the '==>' operator. -}
 
-restarter :: (Void -> Signal a) -- ^ the function to synthesise signal
-          -> Signal (Signal a)
-restarter f = createSignal (SNR f)
+startTokens :: Signal StartToken
+startTokens = createSignal SNU
 
 {-| An operator that ignores its first argument and returns the
 second, but hides the fact that the first argument is not needed.  It
 is equivalent to @flip const@, but it cannot be inlined. -}
 
 {-# NOINLINE (==>) #-}
-(==>) :: Void -> a -> a
+(==>) :: StartToken -> a -> a
 _ ==> x = x

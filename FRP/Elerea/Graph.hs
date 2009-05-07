@@ -29,7 +29,7 @@ data SignalInfo
     | Latcher Id Id Id
     | External
     | Delay Id
-    | Restarter
+    | Tokens
     | Lift1 Id
     | Lift2 Id Id
     | Lift3 Id Id Id
@@ -68,7 +68,7 @@ insertSignal st p (SNE _) = return (Map.insert p External st)
 insertSignal st p (SND _ s) = do
   (s',st') <- buildStore (Map.insert p None st) s
   return (Map.insert p (Delay s') st')
-insertSignal st p (SNR _) = return (Map.insert p Restarter st)
+insertSignal st p (SNU) = return (Map.insert p Tokens st)
 insertSignal st p (SNKA (S r) _) = do
   Ready s <- readIORef r
   insertSignal st p s
@@ -106,7 +106,7 @@ nodeLabel id node = case node of
                       App _ _         -> "app"
                       Latcher _ _ _   -> "latcher"
                       External        -> "external"
-                      Restarter       -> "restarter"
+                      Tokens          -> "tokens"
                       Delay _         -> "delay"
                       Lift1 _         -> "fun1"
                       Lift2 _ _       -> "fun2"
@@ -163,6 +163,6 @@ signalToDot s = do
                   Latcher _ _ _ -> "hexagon"
                   External      -> "invtriangle"
                   Delay _       -> "box"
-                  Restarter     -> "house"
+                  Tokens        -> "house"
                   _             -> "ellipse"
   return $ "digraph G {\n" ++ concat rules ++ "}\n"

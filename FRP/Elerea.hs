@@ -30,10 +30,11 @@ a general idea how to use the library, check out the sources in the
 -}
 
 module FRP.Elerea (
-  DTime, Sink, Signal,
+  DTime, Sink, Signal, StartToken,
   superstep, external, keepAlive, (.@.),
-  stateful, transfer, latcher, restarter,
-  delay, edge, (==>),
+  stateful, transfer, latcher,
+  delay, startTokens, (==>),
+  edge,
   (==@), (/=@), (<@), (<=@), (>=@), (>@),
   (&&@), (||@)
 ) where
