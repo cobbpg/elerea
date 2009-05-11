@@ -466,7 +466,7 @@ delay x0 s = createSignal (SND x0 s)
 
 {-| Dependency injection to allow aging signals whose output is not
 necessarily needed to produce the current sample of the first
-argument.  It equivalent to @(flip . liftA2 . flip) const@, as it
+argument.  It's equivalent to @(flip . liftA2 . flip) const@, as it
 evaluates its second argument first. -}
 
 keepAlive :: Signal a -- ^ the actual output

@@ -1,6 +1,6 @@
 0.6.0 - 090507
 * renamed Void to StartToken
-* changed restarter to the simpler startTokens
+* replaced restarter with the simpler and more versatile startTokens
 
 0.5.0 - 090502
 * changed names of internal constructors to match primitives better
