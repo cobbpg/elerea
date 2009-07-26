@@ -1,10 +1,10 @@
-{-# LANGUAGE ExistentialQuantification, EmptyDataDecls #-}
+{-# LANGUAGE ExistentialQuantification, GeneralizedNewtypeDeriving #-}
 {-# OPTIONS_GHC -fno-warn-name-shadowing #-}
 
 {-|
 
 This is the core module of Elerea, which contains the signal
-implementation and the primitive constructors.
+implementation and the atomic constructors.
 
 The basic idea is to create a dataflow network whose structure closely
 resembles the user's definitions by turning each combinator into a
@@ -16,13 +16,17 @@ created by the '<*>' operator contains an 'SNA' node, which holds two
 references: one to the function signal and another to the argument
 signal.
 
-In order to have a pure(-looking) applicative interface, the library
-relies on 'unsafePerformIO' to create the references on demand.  In
-contrast, the execution of the network is explicitly marked as an IO
-operation.  The core library exposes a single function to animate the
-network called 'superstep', which takes a signal and a time interval,
-and mutates all the variables the signal depends on.  It is supposed
-to be called repeatedly in a loop that also takes care of user input.
+In order to have a pure(-looking) applicative interface for the most
+part, the library relies on 'unsafePerformIO' to create the references
+of stateless signals, while stateful signals have to be obtained from
+a special 'SignalMonad', which is just a wrapping of 'IO' that doesn't
+allow any other action to be performed.
+
+The execution of the network is explicitly marked as an IO operation.
+The core library exposes a single function to animate the network
+called 'superstep', which takes a signal and a time interval, and
+mutates all the variables the signal depends on.  It is supposed to be
+called repeatedly in a loop that also takes care of user input.
 
 To ensure consistency, a superstep has three phases: sampling, aging
 and finalisation.  Each signal reachable from the top-level signal
@@ -54,6 +58,7 @@ module FRP.Elerea.Internal where
 
 import Control.Applicative
 import Control.Monad
+import Control.Monad.Fix
 import Data.IORef
 import System.IO.Unsafe
 
@@ -69,12 +74,17 @@ type DTime = Double
 
 type Sink a = a -> IO ()
 
-{-| An empty type to use as a token for injecting data
-dependencies. -}
-
-data StartToken
-
 -- ** The data structures behind signals
+
+{-| A restricted monad to create stateful signals in. -}
+
+newtype SignalMonad a = SM { createSignal :: IO a } deriving (Monad,Applicative,Functor,MonadFix)
+
+{-| A printing function that can be used in the
+'SignalMonad'. Provided for debugging purposes. -}
+
+signalDebug :: Show a => a -> SignalMonad ()
+signalDebug = SM . print
 
 {-| A signal is represented as a /transactional/ structural node. -}
 
@@ -86,8 +96,8 @@ sampling and aging. -}
 data SignalTrans a
     -- | @Ready s@ is simply the signal @s@ that was not sampled yet
     = Ready (SignalNode a)
-    -- | @Sampling s@ is still @s@ after its current value was
-    -- requested, but still not delivered
+    -- | @Sampling s@ is signal @s@ after its current value was
+    -- requested, but not yet delivered
     | Sampling (SignalNode a)
     -- | @Sampled x s@ is signal @s@ paired with its current value @x@
     | Sampled a (SignalNode a)
@@ -111,15 +121,18 @@ data SignalNode a
     | forall t . SNT (Signal t) a (DTime -> t -> a -> a)
     -- | @SNA sf sx@: pointwise function application
     | forall t . SNA (Signal (t -> a)) (Signal t)
-    -- | @SNL s e ss@: latcher that starts out as @s@ and becomes the
-    -- current value of @ss@ at every moment when @e@ is true
-    | SNL (Signal a) (Signal Bool) (Signal (Signal a))
+    -- | @SNH ss r@: the higher-order signal @ss@ collapsed into a
+    -- | signal cached in reference @r@; @r@ is used during the aging
+    -- | phase
+    | SNH (Signal (Signal a)) (IORef (Signal a))
+    -- | @SNM b sm@: signal generator that executes the monad carried
+    -- | by @sm@ whenever @b@ is true, and outputs the result (or
+    -- | undefined when @b@ is false)
+    | SNM (Signal Bool) (Signal (SignalMonad a))
     -- | @SNE r@: opaque reference to connect peripherals
     | SNE (IORef a)
     -- | @SND s@: the @s@ signal delayed by one superstep
     | SND a (Signal a)
-    -- | @SNU@: a stream of unique identifiers for each superstep
-    | SNU
     -- | @SNKA s l@: equivalent to @s@ while aging signal @l@
     | forall t . SNKA (Signal a) (Signal t)
     -- | @SNF1 f@: @fmap f@
@@ -151,7 +164,7 @@ the time, one can gain a lot by merging these nodes. -}
 
 instance Applicative Signal where
     -- | A constant signal
-    pure = createSignal . SNK
+    pure = makeSignalUnsafe . SNK
     -- | Point-wise application of a function and a data signal (like @ZipList@)
     f@(S rf) <*> x@(S rx) = unsafePerformIO $ do
       -- General fall-back case
@@ -163,10 +176,10 @@ instance Applicative Signal where
       -- so we need to prepare to meeting undefined references by
       -- wrapping reads into exception handlers.
 
-      flip catch (const (return ())) $ do
+      flip catch (const (debugLog "no_fun" $ return ())) $ do
         Ready nf <- readIORef rf
 
-        merged <- flip catch (const (return False)) $ do
+        merged <- flip catch (const (debugLog "no_arg" $ return False)) $ do
           -- Merging constant branches from the two sides
           Ready nx <- readIORef rx
           case (nf,nx) of
@@ -221,6 +234,28 @@ instance Show (Signal a) where
 instance Eq (Signal a) where
     S s1 == S s2 = s1 == s2
 
+unimp :: String -> a
+unimp = error . ("Signal: "++)
+
+instance Ord t => Ord (Signal t) where
+    compare = unimp "compare"
+    min = liftA2 min
+    max = liftA2 max
+
+instance Enum t => Enum (Signal t) where
+    succ = fmap succ
+    pred = fmap pred
+    toEnum = pure . toEnum
+    fromEnum = unimp "fromEnum"
+    enumFrom = unimp "enumFrom"
+    enumFromThen = unimp "enumFromThen"
+    enumFromTo = unimp "enumFromTo"
+    enumFromThenTo = unimp "enumFromThenTo"
+
+instance Bounded t => Bounded (Signal t) where
+    minBound = pure minBound
+    maxBound = pure maxBound
+
 instance Num t => Num (Signal t) where
     (+) = liftA2 (+)
     (-) = liftA2 (-)
@@ -229,6 +264,20 @@ instance Num t => Num (Signal t) where
     abs = fmap abs
     negate = fmap negate
     fromInteger = pure . fromInteger
+
+instance Real t => Real (Signal t) where
+    toRational = unimp "toRational"
+
+instance Integral t => Integral (Signal t) where
+    quot = liftA2 quot
+    rem = liftA2 rem
+    div = liftA2 div
+    mod = liftA2 mod
+    quotRem a b = (fst <$> qrab,snd <$> qrab)
+        where qrab = quotRem <$> a <*> b
+    divMod a b = (fst <$> dmab,snd <$> dmab)
+        where dmab = divMod <$> a <*> b
+    toInteger = unimp "toInteger"
 
 instance Fractional t => Fractional (Signal t) where
     (/) = liftA2 (/)
@@ -257,11 +306,19 @@ instance Floating t => Floating (Signal t) where
 
 -- ** Internal functions to run the network
 
-{-| This function is really just a shorthand to create a reference to
-a given node. -}
+{-| Creating a reference within the 'SignalMonad'.  Used for stateful
+signals. -}
 
-createSignal :: SignalNode a -> Signal a
-createSignal = S . unsafePerformIO . newIORef . Ready
+makeSignal :: SignalNode a -> SignalMonad (Signal a)
+makeSignal node = SM $ do
+  ref <- newIORef (Ready node)
+  return (S ref)
+
+{-| Creating a reference as a pure value.  Used for stateless
+signals. -}
+
+makeSignalUnsafe :: SignalNode a -> Signal a
+makeSignalUnsafe = S . unsafePerformIO . newIORef . Ready
 
 {-| Sampling the signal and all of its dependencies, at the same time.
 We don't need the aged signal in the current superstep, only the
@@ -309,7 +366,8 @@ age (S r) dt = do
                       case s' of
                         SNT s _ _             -> age s dt
                         SNA sf sx             -> age sf dt >> age sx dt
-                        SNL s e ss            -> age s dt >> age e dt >> age ss dt
+                        SNH ss r              -> age ss dt >> readIORef r >>= \s -> age s dt
+                        SNM b sm              -> age b dt >> age sm dt
                         SND _ s               -> age s dt 
                         SNKA s l              -> age s dt >> age l dt
                         SNF1 _ s              -> age s dt 
@@ -332,7 +390,8 @@ commit (S r) = do
                    case s of
                      SNT s _ _             -> commit s
                      SNA sf sx             -> commit sf >> commit sx
-                     SNL s e ss            -> commit s >> commit e >> commit ss
+                     SNH ss r              -> commit ss >> readIORef r >>= \s -> commit s
+                     SNM b sm              -> commit b >> commit sm
                      SND _ s               -> commit s 
                      SNKA s l              -> commit s >> commit l
                      SNF1 _ s              -> commit s 
@@ -345,26 +404,20 @@ commit (S r) = do
     _           -> error "Inconsistent state: signal not aged properly!"
 
 {-| Aging the signal.  Stateful signals have their state forced to
-prevent building up big thunks, and the latcher also does its job
-here.  The other nodes are structurally static. -}
+prevent building up big thunks.  The other nodes are structurally
+static. -}
 
 advance :: SignalNode a -> a -> DTime -> IO (SignalNode a)
-advance (SNS x f)       _ dt = x `seq` return (SNS (f dt x) f)
-advance (SNT s _ f)     v _  = v `seq` return (SNT s v f)
-advance sw@(SNL _ e ss) _ dt = do -- These are ready samples!
-                                  b <- signalValue e dt
-                                  s' <- signalValue ss dt
-                                  if b
-                                    then return (SNL s' e ss)
-                                    else return sw
-advance (SND _ s)       _ dt = do x <- signalValue s dt
-                                  return (SND x s)
-advance s               _ _  = return s
+advance (SNS x f)    _ dt = x `seq` return (SNS (f dt x) f)
+advance (SNT s _ f)  v _  = v `seq` return (SNT s v f)
+advance (SND _ s)    _ dt = do x <- signalValue s dt
+                               return (SND x s)
+advance s            _ _  = return s
 
 {-| Sampling the signal at the current moment.  This is where static
 nodes propagate changes to those they depend on.  Transfer functions
-('SNT') and latchers ('SNL') work without delay, i.e. the effects of
-their input signals can be observed in the same superstep. -}
+('SNT') work without delay, i.e. the effects of their input signals
+can be observed in the same superstep. -}
 
 sample :: SignalNode a -> DTime -> IO a
 sample (SNK x)                 _  = return x
@@ -372,12 +425,14 @@ sample (SNS x _)               _  = return x
 sample (SNT s x f)             dt = do t <- signalValue s dt
                                        return $! f dt t x
 sample (SNA sf sx)             dt = signalValue sf dt <*> signalValue sx dt
-sample (SNL s e ss)            dt = do b <- signalValue e dt
-                                       s' <- signalValue ss dt
-                                       signalValue (if b then s' else s) dt
+sample (SNH ss r)              dt = do s <- signalValue ss dt
+                                       writeIORef r s
+                                       signalValue s dt
+sample (SNM b sm)              dt = do c <- signalValue b dt
+                                       SM m <- signalValue sm dt
+                                       if c then m else return undefined
 sample (SNE r)                 _  = readIORef r
 sample (SND v _)               _  = return v
-sample (SNU)                   _  = return undefined
 sample (SNKA s l)              dt = do signalValue l dt
                                        signalValue s dt
 sample (SNF1 f s)              dt = f <$> signalValue s dt
@@ -388,15 +443,14 @@ sample (SNF5 f s1 s2 s3 s4 s5) dt = liftM5 f (signalValue s1 dt) (signalValue s2
 
 {-| Sampling the signal with some kind of delay in order to resolve
 dependency loops.  Transfer functions simply return their previous
-output, while latchers postpone the change and pass through the
-current value of their current signal even if the latch control signal
-is true at the moment.  Other types of signals are always handled by
-the `sample` function, so it is not possible to create a stateful loop
-composed of solely stateless combinators. -}
+output (delays can be considered a special case, because they always
+do that, so 'sampleDelayed' is never called with them), while other
+types of signals are always handled by the 'sample' function, so it is
+not possible to create a working stateful loop composed of solely
+stateless combinators. -}
 
 sampleDelayed :: SignalNode a -> DTime -> IO a
 sampleDelayed (SNT _ x _) _  = return x
-sampleDelayed (SNL s _ _) dt = signalValue s dt
 sampleDelayed sn          dt = sample sn dt
 
 -- ** Userland primitives
@@ -417,8 +471,8 @@ superstep world dt = do
 
 stateful :: a                 -- ^ initial state
          -> (DTime -> a -> a) -- ^ state transformation
-         -> Signal a
-stateful x0 f = createSignal (SNS x0 f)
+         -> SignalMonad (Signal a)
+stateful x0 f = makeSignal (SNS x0 f)
 
 {-| A stateful transfer function.  The current input affects the
 current output, i.e. the initial state given in the first argument is
@@ -428,20 +482,31 @@ observed by the `sampleDelayed` function. -}
 transfer :: a                      -- ^ initial internal state
          -> (DTime -> t -> a -> a) -- ^ state updater function
          -> Signal t               -- ^ input signal
-         -> Signal a
-transfer x0 f s = createSignal (SNT s x0 f)
+         -> SignalMonad (Signal a)
+transfer x0 f s = makeSignal (SNT s x0 f)
 
-{-| Reactive signal that starts out as @s@ and can change its
-behaviour to the one supplied in @ss@ whenever @e@ is true.  The
-change can be observed immediately, unless the signal is sampled by
-`sampleDelayed`, which puts a delay on the latch control (but not on
-the latched signal!). -}
+{-| A continuous sampler that flattens a higher-order signal by
+outputting its current snapshots. -}
 
-latcher :: Signal a          -- ^ @s@: initial behaviour
-        -> Signal Bool       -- ^ @e@: latch control signal
-        -> Signal (Signal a) -- ^ @ss@: signal of potential future behaviours
+sampler :: Signal (Signal a) -- ^ signal to flatten
         -> Signal a
-latcher s e ss = createSignal (SNL s e ss)
+sampler ss = makeSignalUnsafe (SNH ss (unsafePerformIO (newIORef undefined)))
+
+{-| A reactive signal that takes the value to output from a monad
+carried by its input when a boolean control signal is true, otherwise
+it outputs 'Nothing'.  It is possible to create new signals in the
+monad and also to print debug messages. -}
+
+generator :: Signal Bool            -- ^ control (trigger) signal
+          -> Signal (SignalMonad a) -- ^ a stream of monads to potentially run
+          -> Signal (Maybe a)
+generator b sm = toMaybe <$> b <*> makeSignalUnsafe (SNM b sm)
+
+{-| A helper function to wrap any value in a 'Maybe' depending on a
+boolean condition. -}
+
+toMaybe :: Bool -> a -> Maybe a
+toMaybe c v = if c then Just v else Nothing
 
 {-| A signal that can be directly fed through the sink function
 returned.  This can be used to attach the network to the outer
@@ -461,8 +526,8 @@ prevent automatic delays. -}
 
 delay :: a        -- ^ initial output
       -> Signal a -- ^ the signal to delay
-      -> Signal a
-delay x0 s = createSignal (SND x0 s)
+      -> SignalMonad (Signal a)
+delay x0 s = makeSignal (SND x0 s)
 
 {-| Dependency injection to allow aging signals whose output is not
 necessarily needed to produce the current sample of the first
@@ -472,23 +537,4 @@ evaluates its second argument first. -}
 keepAlive :: Signal a -- ^ the actual output
           -> Signal t -- ^ a signal guaranteed to age when this one is sampled
           -> Signal a
-keepAlive s l = createSignal (SNKA s l)
-
-{-| A stream of tokens freshly generated in each superstep.  These are
-dummy values that must not be evaluated (they are in fact
-'undefined'), but distributed among signals that need to be
-constructed at the given moment in the absence of other dependencies
-on current values, so as to prevent let-floating from moving otherwise
-independent signals to an outer scope.  Dependency on these tokens can
-be established with the '==>' operator. -}
-
-startTokens :: Signal StartToken
-startTokens = createSignal SNU
-
-{-| An operator that ignores its first argument and returns the
-second, but hides the fact that the first argument is not needed.  It
-is equivalent to @flip const@, but it cannot be inlined. -}
-
-{-# NOINLINE (==>) #-}
-(==>) :: StartToken -> a -> a
-_ ==> x = x
+keepAlive s l = makeSignalUnsafe (SNKA s l)

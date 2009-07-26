@@ -29,14 +29,18 @@ a general idea how to use the library, check out the sources in the
 
 -}
 
-module FRP.Elerea (
-  DTime, Sink, Signal, StartToken,
-  superstep, external, keepAlive, (.@.),
-  stateful, transfer, latcher,
-  delay, startTokens, (==>),
-  edge,
-  (==@), (/=@), (<@), (<=@), (>=@), (>@),
-  (&&@), (||@)
+module FRP.Elerea
+    ( DTime, Sink, Signal, SignalMonad
+    , createSignal, superstep
+    , external
+    , keepAlive, (.@.)
+    , stateful, transfer, delay
+    , sampler, generator
+    , storeJust, toMaybe
+    , edge
+    , (==@), (/=@), (<@), (<=@), (>=@), (>@)
+    , (&&@), (||@)
+    , signalDebug
 ) where
 
 import Control.Applicative
@@ -55,8 +59,17 @@ infixr 2 ||@
 bool signal that turns true only at the moment when there is a rising
 edge on the input. -}
 
-edge :: Signal Bool -> Signal Bool
-edge b = (not <$> delay True b) &&@ b
+edge :: Signal Bool -> SignalMonad (Signal Bool)
+edge b = delay True b >>= \db -> return $ (not <$> db) &&@ b
+
+{-| The `storeJust` transfer function behaves as a latcher on a
+'Maybe' input: it keeps its state when the input is 'Nothing', and
+replaces it with the input otherwise. -}
+
+storeJust :: a -> Signal (Maybe a) -> SignalMonad (Signal a)
+storeJust x0 s = transfer x0 store s
+    where store _ Nothing x  = x
+          store _ (Just x) _ = x
 
 {-| Point-wise equality of two signals. -}
 

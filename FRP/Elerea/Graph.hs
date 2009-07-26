@@ -26,10 +26,10 @@ data SignalInfo
     | Stateful
     | Transfer Id
     | App Id Id
-    | Latcher Id Id Id
+    | Sampler Id
+    | Generator Id Id
     | External
     | Delay Id
-    | Tokens
     | Lift1 Id
     | Lift2 Id Id
     | Lift3 Id Id Id
@@ -59,16 +59,17 @@ insertSignal st p (SNA sf sx) = do
   (sf',st') <- buildStore (Map.insert p None st) sf
   (sx',st'') <- buildStore st' sx
   return (Map.insert p (App sf' sx') st'')
-insertSignal st p (SNL s e ss) = do
-  (s',st') <- buildStore (Map.insert p None st) s
-  (e',st'') <- buildStore st' e
-  (ss',st''') <- buildStore st'' ss
-  return (Map.insert p (Latcher s' e' ss') st''')
+insertSignal st p (SNH ss _) = do
+  (ss',st') <- buildStore (Map.insert p None st) ss
+  return (Map.insert p (Sampler ss') st')
+insertSignal st p (SNM b sm) = do
+  (b',st') <- buildStore (Map.insert p None st) b
+  (sm',st'') <- buildStore st' sm
+  return (Map.insert p (Generator b' sm') st'')
 insertSignal st p (SNE _) = return (Map.insert p External st)
 insertSignal st p (SND _ s) = do
   (s',st') <- buildStore (Map.insert p None st) s
   return (Map.insert p (Delay s') st')
-insertSignal st p (SNU) = return (Map.insert p Tokens st)
 insertSignal st p (SNKA (S r) _) = do
   Ready s <- readIORef r
   insertSignal st p s
@@ -104,9 +105,9 @@ nodeLabel id node = case node of
                       Stateful        -> "stateful"
                       Transfer _      -> "transfer"
                       App _ _         -> "app"
-                      Latcher _ _ _   -> "latcher"
+                      Sampler _       -> "sampler"
+                      Generator _ _   -> "generator"
                       External        -> "external"
-                      Tokens          -> "tokens"
                       Delay _         -> "delay"
                       Lift1 _         -> "fun1"
                       Lift2 _ _       -> "fun2"
@@ -140,7 +141,9 @@ signalToDot s = do
                 edges = case n of
                   Transfer s           -> mkEdge s "\"\""
                   App sf sx            -> mkEdge sf "f" ++ mkEdge sx "x"
-                  Latcher s e ss       -> mkEdge s "init" ++ mkEdge e  "ctl" ++ mkEdge ss "\"\""
+                  Sampler ss           -> mkEdge ss "\"\""
+                  Generator b sm       -> mkEdge b "ctl" ++ mkEdge sm "gen"
+                  Delay s              -> mkEdge s "\"\""
                   Lift1 s1             -> mkEdge s1 "x1"
                   Lift2 s1 s2          -> mkEdge s1 "x1" ++ mkEdge s2 "x2"
                   Lift3 s1 s2 s3       -> mkEdge s1 "x1" ++ mkEdge s2 "x2" ++ mkEdge s3 "x3"
@@ -153,16 +156,17 @@ signalToDot s = do
                 mkLabel name attrs = " [label=" ++ name ++ "," ++ attrs ++ "];\n"
                 nodeCol = case n of
                   Transfer _    -> "ffcc99"
-                  Latcher _ _ _ -> "99ccff"
+                  Sampler _     -> "99ccff"
+                  Generator _ _ -> "ccffff"
                   External      -> "ccff99"
                   Stateful      -> "ffffcc"
                   Delay _       -> "ffccff"
                   _             -> "ffffff"
                 nodeShape = case n of
                   Transfer _    -> "diamond"
-                  Latcher _ _ _ -> "hexagon"
+                  Sampler _     -> "hexagon"
+                  Generator _ _ -> "house"
                   External      -> "invtriangle"
                   Delay _       -> "box"
-                  Tokens        -> "house"
                   _             -> "ellipse"
   return $ "digraph G {\n" ++ concat rules ++ "}\n"
