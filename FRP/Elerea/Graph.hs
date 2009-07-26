@@ -124,10 +124,9 @@ it into a string containing the graph in Graphviz
 (<http://www.graphviz.org/>) dot format.  Stateful nodes are coloured
 according to their type.
 
-Because of the fact that Elerea primitives are not referentially
-transparent, the results might differ depending on whether this
-function is called before or after sampling (this also affects the
-actual network!), but the networks should be still equivalent.
+The results might differ depending on whether this function is called
+before or after sampling (this also affects the actual network!), but
+the networks should be still equivalent.
 
 -}
 

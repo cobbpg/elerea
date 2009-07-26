@@ -1,3 +1,6 @@
+1.0.0 - 090726
+* completely renewed interface by introducing the SignalMonad
+
 0.6.0 - 090507
 * renamed Void to StartToken
 * replaced restarter with the simpler and more versatile startTokens

@@ -80,13 +80,13 @@ type Sink a = a -> IO ()
 
 newtype SignalMonad a = SM { createSignal :: IO a } deriving (Monad,Applicative,Functor,MonadFix)
 
-{-| A printing function that can be used in the
-'SignalMonad'. Provided for debugging purposes. -}
+{-| A printing function that can be used in the 'SignalMonad'.
+Provided for debugging purposes. -}
 
 signalDebug :: Show a => a -> SignalMonad ()
 signalDebug = SM . print
 
-{-| A signal is represented as a /transactional/ structural node. -}
+{-| A signal is conceptually a time-varying value. -}
 
 newtype Signal a = S (IORef (SignalTrans a))
 
@@ -122,12 +122,12 @@ data SignalNode a
     -- | @SNA sf sx@: pointwise function application
     | forall t . SNA (Signal (t -> a)) (Signal t)
     -- | @SNH ss r@: the higher-order signal @ss@ collapsed into a
-    -- | signal cached in reference @r@; @r@ is used during the aging
-    -- | phase
+    -- signal cached in reference @r@; @r@ is used during the aging
+    -- phase
     | SNH (Signal (Signal a)) (IORef (Signal a))
     -- | @SNM b sm@: signal generator that executes the monad carried
-    -- | by @sm@ whenever @b@ is true, and outputs the result (or
-    -- | undefined when @b@ is false)
+    -- by @sm@ whenever @b@ is true, and outputs the result (or
+    -- undefined when @b@ is false)
     | SNM (Signal Bool) (Signal (SignalMonad a))
     -- | @SNE r@: opaque reference to connect peripherals
     | SNE (IORef a)
@@ -233,6 +233,8 @@ instance Show (Signal a) where
 
 instance Eq (Signal a) where
     S s1 == S s2 = s1 == s2
+
+{-| Error message for unimplemented instance functions. -}
 
 unimp :: String -> a
 unimp = error . ("Signal: "++)
@@ -453,7 +455,7 @@ sampleDelayed :: SignalNode a -> DTime -> IO a
 sampleDelayed (SNT _ x _) _  = return x
 sampleDelayed sn          dt = sample sn dt
 
--- ** Userland primitives
+-- ** Userland combinators
 
 {-| Advancing the whole network that the given signal depends on by
 the amount of time given in the second argument. -}

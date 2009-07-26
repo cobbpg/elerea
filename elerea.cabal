@@ -7,19 +7,22 @@ Description:
 
  Elerea (Eventless reactivity) is a tiny continuous-time FRP
  implementation without the notion of event-based switching and
- sampling, with first-class signals (time-varying values). Reactivity
- is provided through a latching mechanism where a signal changes its
- behaviour as dictated by a boolean input signal.
+ sampling, with first-class signals (time-varying values).  Reactivity
+ is provided through various higher-order constructs that also allow
+ the user to work with arbitrary time-varying structures containing
+ live signals.
  .
- Elerea provides an easy to use applicative interface, supports
- recursive signals (a definition like @sine = integral 0 (integral 1
- (-sine))@ works without a hitch) and arbitrary external input. Cyclic
- dependencies are detected on the fly and resolved by inserting delays
- dynamically, unless the user does it explicitly.
+ Stateful signals can be safely generated at any time through a
+ specialised monad, while stateless combinators can be used in a
+ purely applicative style.  Elerea signals can be defined recursively,
+ and external input is trivial to attach.  A unique feature of the
+ library is that cyclic dependencies are detected on the fly and
+ resolved by inserting delays dynamically, unless the user does it
+ explicitly.
  .
  This is a minimal library that defines only some basic primitives,
  and you are advised to install @elerea-examples@ as well to get an
- idea how to build non-trivial systems with it. The examples are
+ idea how to build non-trivial systems with it.  The examples are
  separated in order to minimise the dependencies of the core library.
 
 Author:              Patai Gergely
@@ -38,5 +41,5 @@ Library
     FRP.Elerea.Internal
     FRP.Elerea.Graph
 
-  Build-Depends:       base, containers
+  Build-Depends:       base >= 3 && < 5, containers
   ghc-options:         -Wall -O2
