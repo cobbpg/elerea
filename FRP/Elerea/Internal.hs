@@ -166,6 +166,10 @@ instance Applicative Signal where
     -- | A constant signal
     pure = makeSignalUnsafe . SNK
     -- | Point-wise application of a function and a data signal (like @ZipList@)
+
+--  --mf <*> mx = sampler (fmap (\f -> sampler (fmap (pure . f) mx)) mf)
+--  sf <*> sx = sampler (makeSignalUnsafe (SNF1 (\f -> sampler (makeSignalUnsafe (SNF1 (pure . f) sx))) sf))
+
     f@(S rf) <*> x@(S rx) = unsafePerformIO $ do
       -- General fall-back case
       c <- newIORef (Ready (SNA f x))
