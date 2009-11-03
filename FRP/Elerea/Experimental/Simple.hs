@@ -1,5 +1,18 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
 
+{-|
+
+This is an experimental version of Elerea that does not build an
+actual graph of the dataflow network, just maintains a list of actions
+to update signals.  Each signal consists of a mutable variable, an
+aging action and a finalising action.  The variables can only be
+accessed through a sampling action, and they are only referred to in
+the corresponding aging and finalising action.  These actions can be
+accessed through weak pointers that get invalidated when all other
+references to the corresponding variable are lost.
+
+-}
+
 module FRP.Elerea.Experimental.Simple
     ( Signal
     , SignalGen
@@ -103,7 +116,7 @@ delay x0 (S s) = SG $ \pool -> do
 
 -- | Memoising combinator.  It can be used to cache results of
 -- applicative combinators in case they are used in several places.
--- Other than that, it is equivalent to the identity function.
+-- Other than that, it is equivalent to 'return'.
 memo :: Signal a             -- ^ signal to memoise
      -> SignalGen (Signal a)
 memo (S s) = SG $ \pool -> do
