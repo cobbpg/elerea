@@ -40,7 +40,6 @@ Library
     FRP.Elerea
     FRP.Elerea.Internal
     FRP.Elerea.Graph
-    FRP.Elerea.Experimental
     FRP.Elerea.Experimental.Simple
     FRP.Elerea.Experimental.Param
     FRP.Elerea.Experimental.WeakRef

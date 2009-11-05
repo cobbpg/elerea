@@ -71,7 +71,7 @@ after sampling. -}
 data Phase s a = Ready s | Aged s a
 
 instance Functor (Signal p) where
-    fmap = (<*>).pure
+    fmap = liftM
 
 instance Applicative (Signal p) where
     pure = return
@@ -82,7 +82,7 @@ instance Monad (Signal p) where
     S g >>= f = S $ \p -> g p >>= \x -> unS (f x) p
 
 instance Functor (SignalGen p) where
-    fmap = (<*>).pure
+    fmap = liftM
 
 instance Applicative (SignalGen p) where
     pure = return
@@ -107,13 +107,27 @@ createSampler :: SignalGen p (Signal p a) -- ^ the generator of the top-level si
 createSampler (SG gen) = do
   pool <- newIORef []
   (S sample) <- gen pool
+
+  ptrs0 <- readIORef pool
+  writeIORef pool []
+  (as0,cs0) <- unzip . map fromJust <$> mapM deRefWeak ptrs0
+  let ageStatic param = mapM_ ($param) as0
+      commitStatic = sequence_ cs0
+
   return $ \param -> do
+    let update [] ptrs age commit = do
+          writeIORef pool ptrs
+          ageStatic param >> age
+          commitStatic >> commit
+        update (p:ps) ptrs age commit = do
+          r <- deRefWeak p
+          case r of
+            Nothing -> update ps ptrs age commit
+            Just (a,c) -> update ps (p:ptrs) (age >> a param) (commit >> c)
+
     res <- sample param
-    let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
-    (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-    writeIORef pool ptrs
-    mapM_ (($param).fst) acts
-    mapM_ snd acts
+    ptrs <- readIORef pool
+    update ptrs [] (return ()) (return ())
     return res
 
 {-| Auxiliary function used by all the primitives that create a
