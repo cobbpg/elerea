@@ -31,6 +31,10 @@ Head to "FRP.Elerea.Internal" for the implementation details.  To get
 a general idea how to use the library, check out the sources in the
 @elerea-examples@ package.
 
+The "FRP.Elerea.Experimental" branch provides a similar interface with
+a rather different underlying structure, which is likely to be more
+efficient.
+
 -}
 
 module FRP.Elerea

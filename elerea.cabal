@@ -40,8 +40,10 @@ Library
     FRP.Elerea
     FRP.Elerea.Internal
     FRP.Elerea.Graph
+    FRP.Elerea.Experimental
     FRP.Elerea.Experimental.Simple
     FRP.Elerea.Experimental.Param
+    FRP.Elerea.Experimental.WeakRef
 
   Build-Depends:       base >= 3 && < 5, containers, ghc-prim
   ghc-options:         -Wall -O2
