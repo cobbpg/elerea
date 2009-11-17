@@ -41,9 +41,10 @@ import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
+import System.Mem
 import System.Mem.Weak
 
-import FRP.Elerea.Experimental.WeakRef
+--import FRP.Elerea.Experimental.WeakRef
 
 {-| A signal can be thought of as a function of type @Nat -> a@, and
 its 'Monad' instance agrees with that intuition.  Internally, is
@@ -91,8 +92,9 @@ createSampler (SG gen) = do
   pool <- newIORef []
   (S sample) <- gen pool
   return $ do
-    res <- sample
     let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
+    performGC
+    res <- sample
     (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
     writeIORef pool ptrs
     mapM_ fst acts
@@ -117,9 +119,11 @@ addSignal sample age ref pool = do
        commit (Aged x _)  = Ready x
        commit _           = error "commit error: signal not aged"
 
-  update <- mkWeakRef ref (age' =<< readIORef ref,modifyIORef ref commit) Nothing
+       sig = S $ sample' =<< readIORef ref
+  
+  update <- mkWeak sig (age' =<< readIORef ref,modifyIORef ref commit) Nothing
   modifyIORef pool (update:)
-  return (S $ sample' =<< readIORef ref)
+  return sig
 
 {-| The 'delay' transfer function emits the value of a signal from the
 previous superstep, starting with the filler value given in the first
