@@ -16,6 +16,9 @@ following ways:
 * there is no 'sampler' any more, it is substituted by 'join', as
   signals are monads;
 
+* 'generator' has been conceptually simplified, so it's a more basic
+  primitive now;
+
 * there is no automatic delay in order to preserve semantic soundness
   (e.g. the monad laws for signals);
 
@@ -30,7 +33,7 @@ following ways:
 module FRP.Elerea.Experimental.Param
     ( Signal
     , SignalGen
-    , createSampler
+    , start
     , external
     , delay
     , stateful
@@ -46,7 +49,7 @@ import Data.IORef
 import Data.Maybe
 import System.Mem.Weak
 
-import FRP.Elerea.Experimental.WeakRef
+--import FRP.Elerea.Experimental.WeakRef
 
 {-| A signal can be thought of as a function of type @Nat -> a@, and
 its 'Monad' instance agrees with that intuition.  Internally, is
@@ -102,9 +105,9 @@ result. The computation accepts a global parameter that will be
 distributed to all signals.  For instance, this can be the time step,
 if we want to model continuous-time signals. -}
 
-createSampler :: SignalGen p (Signal p a) -- ^ the generator of the top-level signal
-              -> IO (p -> IO a)           -- ^ the computation to sample the signal
-createSampler (SG gen) = do
+start :: SignalGen p (Signal p a) -- ^ the generator of the top-level signal
+      -> IO (p -> IO a)           -- ^ the computation to sample the signal
+start (SG gen) = do
   pool <- newIORef []
   (S sample) <- gen pool
 
@@ -142,9 +145,11 @@ addSignal sample age ref pool = do
   let  commit (Aged s _)  = Ready s
        commit _           = error "commit error: signal not aged"
 
-  update <- mkWeakRef ref (\p -> readIORef ref >>= age p, modifyIORef ref commit) Nothing
+       sig = S $ \p -> readIORef ref >>= sample p
+  
+  update <- mkWeak sig (\p -> readIORef ref >>= age p, modifyIORef ref commit) Nothing
   modifyIORef pool (update:)
-  return (S $ \p -> readIORef ref >>= sample p)
+  return sig
 
 {-| The 'delay' transfer function emits the value of a signal from the
 previous superstep, starting with the filler value given in the first
@@ -182,24 +187,21 @@ memo (S s) = SG $ \pool -> do
   addSignal sample age ref pool
 
 {-| A reactive signal that takes the value to output from a monad
-carried by its input when a boolean control signal is true, otherwise
-it repeats its previous output.  It is possible to create new signals
-in the monad. -}
+carried by its input.  It is possible to create new signals in the
+monad. -}
 
-generator :: Signal p Bool            -- ^ control (trigger) signal
-          -> (SignalGen p a)          -- ^ the generator of the initial output
-          -> Signal p (SignalGen p a) -- ^ a stream of generators to potentially run
+generator :: Signal p (SignalGen p a) -- ^ a stream of generators to potentially run
           -> SignalGen p (Signal p a)
-generator (S ctr) (SG gen0) (S gen) = SG $ \pool -> do
-  ref <- newIORef . Ready =<< gen0 pool
+generator (S gen) = SG $ \pool -> do
+  ref <- newIORef (Ready undefined)
 
-  let  next p x = ctr p >>= \b -> if b then ($pool).unSG =<< gen p else return x
+  let  next p = ($pool).unSG =<< gen p
+       
+       sample p (Ready _)  = next p >>= \x' -> writeIORef ref (Aged x' x') >> return x'
+       sample _ (Aged _ x) = return x
 
-       sample p (Ready x)      = next p x >>= \x' -> writeIORef ref (Aged x' x') >> return x'
-       sample _ (Aged _ x)     = return x
-
-       age p (Ready x)      = next p x >>= \x' -> writeIORef ref (Aged x' x')
-       age _ _              = return ()
+       age p (Ready _) = next p >>= \x' -> writeIORef ref (Aged x' x')
+       age _ _         = return ()
 
   addSignal sample age ref pool
 
@@ -223,11 +225,11 @@ stateful :: a -> (p -> a -> a) -> SignalGen p (Signal p a)
 stateful x0 f = SG $ \pool -> do
   ref <- newIORef (Ready x0)
 
-  let  sample _ (Ready x)   = return x
-       sample _ (Aged _ x)  = return x
+  let  sample _ (Ready x)  = return x
+       sample _ (Aged _ x) = return x
 
-       age p (Ready x)  = let x' = f p x in x' `seq` writeIORef ref (Aged x' x)
-       age _ _          = return ()
+       age p (Ready x) = let x' = f p x in x' `seq` writeIORef ref (Aged x' x)
+       age _ _         = return ()
 
   addSignal sample age ref pool
 
@@ -241,12 +243,12 @@ transfer :: a -> (p -> t -> a -> a) -> Signal p t -> SignalGen p (Signal p a)
 transfer x0 f (S s) = SG $ \pool -> do
   ref <- newIORef (Ready x0)
 
-  let  sample p (Ready x)   = s p >>= \y -> let x' = f p y x in
+  let  sample p (Ready x)  = s p >>= \y -> let x' = f p y x in
                                             x' `seq` writeIORef ref (Aged x' x') >> return x'
-       sample _ (Aged _ x)  = return x
+       sample _ (Aged _ x) = return x
 
-       age p (Ready x)  = s p >>= \y -> let x' = f p y x in
+       age p (Ready x) = s p >>= \y -> let x' = f p y x in
                                         x' `seq` writeIORef ref (Aged x' x')
-       age _ _          = return ()
+       age _ _         = return ()
 
   addSignal sample age ref pool

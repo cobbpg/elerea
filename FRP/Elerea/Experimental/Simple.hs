@@ -8,7 +8,7 @@ timers, where each expired timer is removed from the collection.
 First of all, we'll need a simple tester function:
 
 @
- sigtest gen = 'replicateM' 20 '=<<' 'start' gen
+ sigtest gen = 'replicateM' 15 '=<<' 'start' gen
 @
 
 We can try it with a simple example:
@@ -47,7 +47,7 @@ list of new timers at every point:
    let gen t = 'mapM' ('uncurry' countdown) newTimers
            where newTimers = [(n,v) | (n,v,st) \<- ts, st == t]
    cnt \<- 'stateful' 0 (+1)
-   'return' $ 'generator' (gen '<$>' cnt)
+   'generator' (gen '<$>' cnt)
 @
 
 Now we need to encapsulate the timer source signal in another signal
@@ -62,25 +62,27 @@ whether it should be kept.  We can use @mdo@ expressions (a variant of
 @
  collection :: Signal [Signal a] -\> (a -\> Bool) -\> SignalGen (Signal [a])
  collection source isAlive = mdo
-   coll \<- 'liftA2' (++) source '<$>' 'delay' [] coll'
-   let  collWithVals = 'zip' '<$>' ('sequence' '=<<' coll) '<*>' coll
-        collWithVals' = 'filter' (isAlive.'fst') '<$>' collWithVals
-        coll' = 'map' 'snd' '<$>' collWithVals'
+   sig \<- 'delay' [] ('map' 'snd' '<$>' collWithVals')
+   coll \<- 'memo' ('liftA2' (++) source sig)
+   let collWithVals = 'zip' '<$>' ('sequence' '=<<' coll) '<*>' coll
+   collWithVals' \<- 'memo' ('filter' (isAlive . 'fst') '<$>' collWithVals)
    'return' $ 'map' 'fst' '<$>' collWithVals'
 @
 
 We need recursion to define the @coll@ signal as a delayed version of
-@coll'@, which represents its continuation.  At every point of time
-its output is concatenated with that of the source (we need to lift
-the (++) operator twice in order to get behind both the 'SignalGen'
-and the 'Signal' abstraction).  Then we define @collWithVals@, which
-simply pairs up every signal with its current output.  The output is
-obtained by extracting the current value of the signal container and
-sampling each element with 'sequence'.  We can then derive
-@collWithVals'@, which contains only the signals that must be kept for
-the next round along with their output.  By throwing out the
-respective parts, we can get both the final output and the collection
-for the next step (@coll'@).
+its continuation, which does not contain signals that need to be
+removed in the current sample.  At every point of time the running
+collection is concatenated with the source.  We define @collWithVals@,
+which simply pairs up every signal with its current output.  The
+output is obtained by extracting the current value of the signal
+container and sampling each element with 'sequence'.  We can then
+derive @collWithVals'@, which contains only the signals that must be
+kept for the next round along with their output.  Both @coll@ and
+@collWithVals'@ have to be memoised, because they are used more than
+once (the program would work without that, but it would recalculate
+both signals each time they are used).  By throwing out the respective
+parts, we can get both the final output and the collection for the
+next step (@coll'@).
 
 Now we can easily finish the original task:
 
@@ -88,8 +90,8 @@ Now we can easily finish the original task:
  timers :: [(String, Int, Int)] -\> SignalGen (Signal [(String, Int)])
  timers timerData = do
    src \<- timerSource timerData
-   getOutput '<$>' collection src (isJust.'snd')
-     where getOutput = 'fmap' ('map' (\(name,Just val) -> (name,val)))
+   getOutput '<$>' collection src ('isJust' . 'snd')
+     where getOutput = 'fmap' ('map' (\\(name,Just val) -> (name,val)))
 @
 
 As a test, we can start four timers: /a/ at t=0 with value 3, /b/ and
@@ -99,7 +101,7 @@ As a test, we can start four timers: /a/ at t=0 with value 3, /b/ and
  \> sigtest $ timers [(\"a\",3,0),(\"b\",5,1),(\"c\",3,1),(\"d\",4,3)]
  [[(\"a\",3)],[(\"b\",5),(\"c\",3),(\"a\",2)],[(\"b\",4),(\"c\",2),(\"a\",1)],
   [(\"d\",4),(\"b\",3),(\"c\",1),(\"a\",0)],[(\"d\",3),(\"b\",2),(\"c\",0)],
-  [(\"d\",2),(\"b\",1)],[(\"d\",1),(\"b\",0)],[(\"d\",0)],[],[],[],[],[],[],[],[]]
+  [(\"d\",2),(\"b\",1)],[(\"d\",1),(\"b\",0)],[(\"d\",0)],[],[],[],[],[],[],[]]
 @
 
 If the noise of the applicative lifting operators feels annoying, she
@@ -111,11 +113,10 @@ substitute the explicit lifting.  For instance, it allows us to define
 @
  collection :: Stream [Stream a] -> (a -> Bool) -> StreamGen (Stream [a])
  collection source isAlive = mdo
-   sig <- 'delay' [] coll'
-   let  coll = (|source ++ sig|)
-        collWithVals = (|'zip' ('sequence' '=<<' coll) coll|)
-        collWithVals' = (|'filter' ~(isAlive.'fst') collWithVals|)
-        coll' = (|'map' ~'snd' collWithVals'|)
+   sig \<- 'delay' [] (|'map' ~'snd' collWithVals'|)
+   coll \<- 'memo' (|source ++ sig|)
+   let collWithVals = (|'zip' ('sequence' '=<<' coll) coll|)
+   collWithVals' \<- 'memo' (|'filter' ~(isAlive . 'fst') collWithVals|)
    'return' (|'map' ~'fst' collWithVals'|)
 @
 
@@ -301,8 +302,10 @@ external x = do
   ref <- newIORef x
   return (S (readIORef ref), writeIORef ref)
 
-{-| A pure stateful signal.  The initial state is the first output. It
-is equivalent to the following expression:
+{-| A pure stateful signal.  The initial state is the first output,
+and every subsequent state is derived from the preceding one by
+applying a pure transformation.  It is equivalent to the following
+expression:
 
 @
  stateful x0 f = 'mfix' $ \sig -> 'delay' x0 (f '<$>' sig)
@@ -317,7 +320,9 @@ stateful x0 f = mfix $ \sig -> delay x0 (f <$> sig)
 {-| A stateful transfer function.  The current input affects the
 current output, i.e. the initial state given in the first argument is
 considered to appear before the first output, and can never be
-observed.  It is equivalent to the following expression:
+observed, and subsequent states are determined by combining the
+preceding state with the current output of the input signal using the
+function supplied.  It is equivalent to the following expression:
 
 @
  transfer x0 f s = 'mfix' $ \sig -> 'liftA2' f s '<$>' 'delay' x0 sig
@@ -329,172 +334,3 @@ transfer :: a                    -- ^ initial internal state
          -> Signal t             -- ^ input signal
          -> SignalGen (Signal a)
 transfer x0 f s = mfix $ \sig -> liftA2 f s <$> delay x0 sig
-
-{-
-
-The interface of this module differs from the old Elerea in the
-following ways:
-
-* there is no delta time argument, as this module provides discrete
-  signals (see "FRP.Elerea.Experimental.Param" for a version that
-  recovers this argument), so time step can only be provided as an
-  'external' signal;
-
-* there is no 'sampler' any more, it is substituted by 'join', as
-  signals are monads;
-
-* there is no automatic delay in order to preserve semantic soundness
-  (e.g. the monad laws for signals);
-
-* all signals are aged regardless of whether they are sampled
-  (i.e. their behaviour doesn't depend on the context any more);
-
-* the user needs to cache the results of applicative operations to be
-  reused in multiple places explicitly using the 'memo' combinator.
-
-import Control.Applicative
-import Control.Monad
-import Control.Monad.Fix
-import Data.IORef
-import Data.Maybe
-import System.Mem
-import System.Mem.Weak
-
---import FRP.Elerea.Experimental.WeakRef
-
-{-| A signal can be thought of as a function of type @Nat -> a@, and
-its 'Monad' instance agrees with that intuition.  Internally, is
-represented by a sampling computation. -}
-
-newtype Signal a = S (IO a)
-    deriving (Functor, Applicative, Monad)
-
-{-| A dynamic set of actions to update a network without breaking
-consistency. -}
-
-type UpdatePool = [Weak (IO (),IO ())]
-
-{-| A signal generator is the only source of stateful signals.
-Internally, computes a signal structure and adds the new variables to
-an existing update pool. -}
-
-newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IO a }
-
-{-| The phases every signal goes through during a superstep. -}
-
-data Phase a = Ready a | Aged a a
-
-instance Functor SignalGen where
-    fmap = (<*>).pure
-
-instance Applicative SignalGen where
-    pure = return
-    (<*>) = ap
-
-instance Monad SignalGen where
-    return = SG . const . return
-    SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
-
-instance MonadFix SignalGen where
-    mfix f = SG $ \p -> mfix (($p).unSG.f)
-
-{-| Embedding a signal into an 'IO' environment.  Repeated calls to
-the computation returned cause the whole network to be updated, and
-the current sample of the top-level signal is produced as a result. -}
-
-createSampler :: SignalGen (Signal a) -- ^ the generator of the top-level signal
-              -> IO (IO a)            -- ^ the computation to sample the signal
-createSampler (SG gen) = do
-  pool <- newIORef []
-  (S sample) <- gen pool
-  return $ do
-    let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
-    performGC
-    res <- sample
-    (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-    writeIORef pool ptrs
-    mapM_ fst acts
-    mapM_ snd acts
-    return res
-
-{-| Auxiliary function used by all the primitives that create a
-mutable variable. -}
-
-addSignal :: (a -> IO a)      -- ^ sampling function
-          -> (a -> IO ())     -- ^ aging function
-          -> IORef (Phase a)  -- ^ the mutable variable behind the signal
-          -> IORef UpdatePool -- ^ the pool of update actions
-          -> IO (Signal a)
-addSignal sample age ref pool = do
-  let  sample' (Ready x)    = sample x
-       sample' (Aged _ x)   = return x
-
-       age' (Ready x)    = age x
-       age' _            = return ()
-
-       commit (Aged x _)  = Ready x
-       commit _           = error "commit error: signal not aged"
-
-       sig = S $ sample' =<< readIORef ref
-  
-  update <- mkWeak sig (age' =<< readIORef ref,modifyIORef ref commit) Nothing
-  modifyIORef pool (update:)
-  return sig
-
-{-| The 'delay' transfer function emits the value of a signal from the
-previous superstep, starting with the filler value given in the first
-argument. -}
-
-delay :: a                    -- ^ initial output
-      -> Signal a             -- ^ the signal to delay
-      -> SignalGen (Signal a)
-delay x0 (S s) = SG $ \pool -> do
-  ref <- newIORef (Ready x0)
-
-  let age x = s >>= \x' -> x' `seq` writeIORef ref (Aged x' x)
-
-  addSignal return age ref pool
-
-{-| Memoising combinator.  It can be used to cache results of
-applicative combinators in case they are used in several places.  It
-is observationally equivalent to 'return'. -}
-
-memo :: Signal a             -- ^ signal to memoise
-     -> SignalGen (Signal a)
-memo (S s) = SG $ \pool -> do
-  ref <- newIORef (Ready undefined)
-
-  let  sample _ = s >>= \x -> writeIORef ref (Aged undefined x) >> return x       
-       age _ = writeIORef ref . Aged undefined =<< s
-
-  addSignal sample age ref pool
-
-{-| A reactive signal that takes the value to output from a monad
-carried by its input when a boolean control signal is true, otherwise
-it repeats its previous output.  It is possible to create new signals
-in the monad. -}
-
-generator :: Signal Bool          -- ^ control (trigger) signal
-          -> (SignalGen a)        -- ^ the generator of the initial output
-          -> Signal (SignalGen a) -- ^ a signal of generators to potentially run
-          -> SignalGen (Signal a)
-generator (S ctr) (SG gen0) (S gen) = SG $ \pool -> do
-  ref <- newIORef . Ready =<< gen0 pool
-
-  let  next x = ctr >>= \b -> if b then ($pool).unSG =<< gen else return x
-       sample x = next x >>= \x' -> writeIORef ref (Aged x' x') >> return x'
-       age x = next x >>= \x' -> writeIORef ref (Aged x' x')
-
-  addSignal sample age ref pool
-
-{-| A signal that can be directly fed through the sink function
-returned.  This can be used to attach the network to the outer
-world. -}
-
-external :: a                         -- ^ initial value
-         -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
-external x = do
-  ref <- newIORef x
-  return (S (readIORef ref), writeIORef ref)
-
--}
