@@ -1,3 +1,6 @@
+1.1.0 - 091125
+* added experimental branch with a cleaner semantics
+
 1.0.0 - 090726
 * completely renewed interface by introducing the SignalMonad
 
