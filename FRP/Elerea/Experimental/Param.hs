@@ -40,6 +40,7 @@ module FRP.Elerea.Experimental.Param
     , transfer
     , memo
     , generator
+    , debug
     ) where
 
 import Control.Applicative
@@ -48,8 +49,6 @@ import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
 import System.Mem.Weak
-
---import FRP.Elerea.Experimental.WeakRef
 
 {-| A signal can be thought of as a function of type @Nat -> a@, and
 its 'Monad' instance agrees with that intuition.  Internally, is
@@ -74,29 +73,29 @@ after sampling. -}
 data Phase s a = Ready s | Aged s a
 
 instance Functor (Signal p) where
-    fmap = liftM
+  fmap = liftM
 
 instance Applicative (Signal p) where
-    pure = return
-    (<*>) = ap
+  pure = return
+  (<*>) = ap
 
 instance Monad (Signal p) where
-    return = S . const . return
-    S g >>= f = S $ \p -> g p >>= \x -> unS (f x) p
+  return = S . const . return
+  S g >>= f = S $ \p -> g p >>= \x -> unS (f x) p
 
 instance Functor (SignalGen p) where
-    fmap = liftM
+  fmap = liftM
 
 instance Applicative (SignalGen p) where
-    pure = return
-    (<*>) = ap
+  pure = return
+  (<*>) = ap
 
 instance Monad (SignalGen p) where
-    return = SG . const . return
-    SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
+  return = SG . const . return
+  SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
 
 instance MonadFix (SignalGen p) where
-    mfix f = SG $ \p -> mfix (($p).unSG.f)
+  mfix f = SG $ \p -> mfix (($p).unSG.f)
 
 {-| Embedding a signal into an 'IO' environment.  Repeated calls to
 the computation returned cause the whole network to be updated, and
@@ -252,3 +251,90 @@ transfer x0 f (S s) = SG $ \pool -> do
        age _ _         = return ()
 
   addSignal sample age ref pool
+
+{-| A printing action within the |SignalGen| monad. -}
+
+debug :: String -> SignalGen p ()
+debug = SG . const . putStrLn
+
+{-| The @Show@ instance is only defined for the sake of 'Num'... -}
+
+instance Show (Signal p a) where
+  showsPrec _ _ s = "<SIGNAL>" ++ s
+
+{-| Equality test is impossible. -}
+
+instance Eq (Signal p a) where
+  _ == _ = False
+  
+{-| Error message for unimplemented instance functions. -}
+
+unimp :: String -> a
+unimp = error . ("Signal: "++)
+
+instance Ord t => Ord (Signal p t) where
+  compare = unimp "compare"
+  min = liftA2 min
+  max = liftA2 max
+
+instance Enum t => Enum (Signal p t) where
+  succ = fmap succ
+  pred = fmap pred
+  toEnum = pure . toEnum
+  fromEnum = unimp "fromEnum"
+  enumFrom = unimp "enumFrom"
+  enumFromThen = unimp "enumFromThen"
+  enumFromTo = unimp "enumFromTo"
+  enumFromThenTo = unimp "enumFromThenTo"
+
+instance Bounded t => Bounded (Signal p t) where
+  minBound = pure minBound
+  maxBound = pure maxBound
+
+instance Num t => Num (Signal p t) where
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  signum = fmap signum
+  abs = fmap abs
+  negate = fmap negate
+  fromInteger = pure . fromInteger
+
+instance Real t => Real (Signal p t) where
+  toRational = unimp "toRational"
+
+instance Integral t => Integral (Signal p t) where
+  quot = liftA2 quot
+  rem = liftA2 rem
+  div = liftA2 div
+  mod = liftA2 mod
+  quotRem a b = (fst <$> qrab,snd <$> qrab)
+    where qrab = quotRem <$> a <*> b
+  divMod a b = (fst <$> dmab,snd <$> dmab)
+    where dmab = divMod <$> a <*> b
+  toInteger = unimp "toInteger"
+
+instance Fractional t => Fractional (Signal p t) where
+  (/) = liftA2 (/)
+  recip = fmap recip
+  fromRational = pure . fromRational
+
+instance Floating t => Floating (Signal p t) where
+  pi = pure pi
+  exp = fmap exp
+  sqrt = fmap sqrt
+  log = fmap log
+  (**) = liftA2 (**)
+  logBase = liftA2 logBase
+  sin = fmap sin
+  tan = fmap tan
+  cos = fmap cos
+  asin = fmap asin
+  atan = fmap atan
+  acos = fmap acos
+  sinh = fmap sinh
+  tanh = fmap tanh
+  cosh = fmap cosh
+  asinh = fmap asinh
+  atanh = fmap atanh
+  acosh = fmap acosh

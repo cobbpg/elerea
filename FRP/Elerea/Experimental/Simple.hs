@@ -3,15 +3,15 @@
 {-|
 
 This module provides efficient higher-order discrete signals.  For a
-motivating example, let's create a dynamic collection of countdown
-timers, where each expired timer is removed from the collection.
-First of all, we'll need a simple tester function:
+non entirely trivial example, let's create a dynamic collection of
+countdown timers, where each expired timer is removed from the
+collection.  First of all, we'll need a simple tester function:
 
 @
  sigtest gen = 'replicateM' 15 '=<<' 'start' gen
 @
 
-We can try it with a simple example:
+We can try it with a trivial example:
 
 @
  \> sigtest $ 'stateful' 2 (+3)
@@ -29,12 +29,12 @@ timer:
    'return' ((,) name '<$>' timer)
 @
 
-We can easily test it:
+Let's see if it works:
 
 @
  \> sigtest $ countdown \"foo\" 4
- [(\"foo\",Just 4),(\"foo\",Just 3),(\"foo\",Just 2),(\"foo\",Just 1),
-  (\"foo\",Just 0),(\"foo\",Nothing),(\"foo\",Nothing),...]
+ [(\"foo\",Just 4),(\"foo\",Just 3),(\"foo\",Just 2),(\"foo\",Just 1),(\"foo\",Just 0),
+  (\"foo\",Nothing),(\"foo\",Nothing),(\"foo\",Nothing),...]
 @
 
 Next, we will define a timer source that takes a list of timer names,
@@ -115,8 +115,7 @@ substitute the explicit lifting.  For instance, it allows us to define
  collection source isAlive = mdo
    sig \<- 'delay' [] (|'map' ~'snd' collWithVals'|)
    coll \<- 'memo' (|source ++ sig|)
-   let collWithVals = (|'zip' ('sequence' '=<<' coll) coll|)
-   collWithVals' \<- 'memo' (|'filter' ~(isAlive . 'fst') collWithVals|)
+   collWithVals' \<- 'memo' (|'filter' ~(isAlive . 'fst') (|'zip' ('sequence' '=<<' coll) coll|)|)
    'return' (|'map' ~'fst' collWithVals'|)
 @
 
@@ -167,18 +166,18 @@ newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IO a }
 data Phase a = Ready a | Updated a a
 
 instance Functor SignalGen where
-    fmap = (<*>).pure
+  fmap = (<*>).pure
 
 instance Applicative SignalGen where
-    pure = return
-    (<*>) = ap
-
+  pure = return
+  (<*>) = ap
+        
 instance Monad SignalGen where
-    return = SG . const . return
-    SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
+  return = SG . const . return
+  SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
 
 instance MonadFix SignalGen where
-    mfix f = SG $ \p -> mfix (($p).unSG.f)
+  mfix f = SG $ \p -> mfix (($p).unSG.f)
 
 {-| Embedding a signal into an 'IO' environment.  Repeated calls to
 the computation returned cause the whole network to be updated, and
@@ -235,7 +234,7 @@ should also make it clear why the return value is 'SignalGen'):
  delay x0 s t_start t_sample
    | t_start == t_sample = x0
    | t_start < t_sample  = s (t_sample-1)
-   | otherwise           = 'error' \"Premature sample!\"
+   | otherwise           = error \"Premature sample!\"
 @
 
 The way signal generators are extracted ensures that the error can
@@ -334,3 +333,85 @@ transfer :: a                    -- ^ initial internal state
          -> Signal t             -- ^ input signal
          -> SignalGen (Signal a)
 transfer x0 f s = mfix $ \sig -> liftA2 f s <$> delay x0 sig
+
+{-| The @Show@ instance is only defined for the sake of 'Num'... -}
+
+instance Show (Signal a) where
+  showsPrec _ _ s = "<SIGNAL>" ++ s
+
+{-| Equality test is impossible. -}
+
+instance Eq (Signal a) where
+  _ == _ = False
+  
+{-| Error message for unimplemented instance functions. -}
+
+unimp :: String -> a
+unimp = error . ("Signal: "++)
+
+instance Ord t => Ord (Signal t) where
+  compare = unimp "compare"
+  min = liftA2 min
+  max = liftA2 max
+
+instance Enum t => Enum (Signal t) where
+  succ = fmap succ
+  pred = fmap pred
+  toEnum = pure . toEnum
+  fromEnum = unimp "fromEnum"
+  enumFrom = unimp "enumFrom"
+  enumFromThen = unimp "enumFromThen"
+  enumFromTo = unimp "enumFromTo"
+  enumFromThenTo = unimp "enumFromThenTo"
+
+instance Bounded t => Bounded (Signal t) where
+  minBound = pure minBound
+  maxBound = pure maxBound
+
+instance Num t => Num (Signal t) where
+  (+) = liftA2 (+)
+  (-) = liftA2 (-)
+  (*) = liftA2 (*)
+  signum = fmap signum
+  abs = fmap abs
+  negate = fmap negate
+  fromInteger = pure . fromInteger
+
+instance Real t => Real (Signal t) where
+  toRational = unimp "toRational"
+
+instance Integral t => Integral (Signal t) where
+  quot = liftA2 quot
+  rem = liftA2 rem
+  div = liftA2 div
+  mod = liftA2 mod
+  quotRem a b = (fst <$> qrab,snd <$> qrab)
+    where qrab = quotRem <$> a <*> b
+  divMod a b = (fst <$> dmab,snd <$> dmab)
+    where dmab = divMod <$> a <*> b
+  toInteger = unimp "toInteger"
+
+instance Fractional t => Fractional (Signal t) where
+  (/) = liftA2 (/)
+  recip = fmap recip
+  fromRational = pure . fromRational
+
+instance Floating t => Floating (Signal t) where
+  pi = pure pi
+  exp = fmap exp
+  sqrt = fmap sqrt
+  log = fmap log
+  (**) = liftA2 (**)
+  logBase = liftA2 logBase
+  sin = fmap sin
+  tan = fmap tan
+  cos = fmap cos
+  asin = fmap asin
+  atan = fmap atan
+  acos = fmap acos
+  sinh = fmap sinh
+  tanh = fmap tanh
+  cosh = fmap cosh
+  asinh = fmap asinh
+  atanh = fmap atanh
+  acosh = fmap acosh
