@@ -28,22 +28,17 @@ The modules below implement the basic idea in two variations:
   accessible to every node during the update, which can be used to
   provide a time step between samplings, or any other input necessary;
 
-An extension of the second version with automatic delays will be
-released later.
+* "FRP.Elerea.Experimental.Delayed" adds automatic delays, which
+  violates referential transparency in a limited way, but improves the
+  usability of the API when this doesn't matter.
 
-This module exports the parametric version along with a few utility
+This module exports the delayed version along with a few utility
 functions.
 
 -}
 
-{-
-* "FRP.Elerea.Experimental.Delayed" adds automatic delays, which
-  violates referential transparency in a limited way, but improves the
-  usability of the API when this doesn't matter.
--}
-
 module FRP.Elerea.Experimental
-       ( module FRP.Elerea.Experimental.Param
+       ( module FRP.Elerea.Experimental.Delayed
        , storeJust
        , edge
        , (==@), (/=@), (<@), (<=@), (>=@), (>@)
@@ -51,7 +46,7 @@ module FRP.Elerea.Experimental
        ) where
 
 import Control.Applicative
-import FRP.Elerea.Experimental.Param
+import FRP.Elerea.Experimental.Delayed
 
 infix  4 ==@, /=@, <@, <=@, >=@, >@
 infixr 3 &&@
