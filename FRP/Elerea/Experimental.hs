@@ -39,7 +39,7 @@ functions.
 
 module FRP.Elerea.Experimental
        ( module FRP.Elerea.Experimental.Delayed
-       , storeJust
+       , (-->)
        , edge
        , (==@), (/=@), (<@), (<=@), (>=@), (>@)
        , (&&@), (||@)
@@ -51,6 +51,7 @@ import FRP.Elerea.Experimental.Delayed
 infix  4 ==@, /=@, <@, <=@, >=@, >@
 infixr 3 &&@
 infixr 2 ||@
+infix  2 -->
 
 {-| The 'edge' transfer function takes a bool signal and emits another
 bool signal that turns true only at the moment when there is a rising
@@ -59,14 +60,14 @@ edge on the input. -}
 edge :: Signal p Bool -> SignalGen p (Signal p Bool)
 edge b = delay True b >>= \db -> return $ (not <$> db) &&@ b
 
-{-| The 'storeJust' transfer function behaves as a latch on a 'Maybe'
+{-| The '-->' transfer function behaves as a latch on a 'Maybe'
 input: it keeps its state when the input is 'Nothing', and replaces it
 with the input otherwise. -}
 
-storeJust :: a                        -- ^ Initial output
-          -> Signal p (Maybe a)       -- ^ Maybe signal to latch on
-          -> SignalGen p (Signal p a)
-storeJust x0 s = transfer x0 store s
+(-->) :: a                        -- ^ Initial output
+      -> Signal p (Maybe a)       -- ^ Maybe signal to latch on
+      -> SignalGen p (Signal p a)
+x0 --> s = transfer x0 store s
     where store _ Nothing  x = x
           store _ (Just x) _ = x
 
