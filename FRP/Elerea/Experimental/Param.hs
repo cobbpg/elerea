@@ -252,7 +252,7 @@ transfer x0 f (S s) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| A printing action within the |SignalGen| monad. -}
+{-| A printing action within the 'SignalGen' monad. -}
 
 debug :: String -> SignalGen p ()
 debug = SG . const . putStrLn
