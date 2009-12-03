@@ -104,9 +104,10 @@ x0 --> s = transfer x0 store s
 {-| Point-wise OR of two boolean signals. -}
 
 (||@) :: Signal p Bool -> Signal p Bool -> Signal p Bool
-(||@) = liftA2 (||)
+s1 ||@ s2 = s1 >>= \b -> if b then return True else s2
 
 {-| Point-wise AND of two boolean signals. -}
 
 (&&@) :: Signal p Bool -> Signal p Bool -> Signal p Bool
-(&&@) = liftA2 (&&)
+s1 &&@ s2 = s1 >>= \b -> if b then s2 else return False
+
