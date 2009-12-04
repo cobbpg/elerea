@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             1.2.0
+Version:             1.2.1
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP

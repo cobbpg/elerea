@@ -1,3 +1,6 @@
+1.2.1 - 091204
+* modified the &&@ and ||@ operators to short-circuit
+
 1.2.0 - 091202
 * added the delayed version to the experimental branch
 * renamed storeJust to (-->) in the experimental branch
