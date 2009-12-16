@@ -141,7 +141,7 @@ addSignal sample age ref pool = do
        commit _          = error "commit error: signal not aged"
 
        sig = S $ \p -> readIORef ref >>= sample p
-  
+
   update <- mkWeak sig (\p -> readIORef ref >>= age p, modifyIORef ref commit) Nothing
   modifyIORef pool (update:)
   return sig
@@ -193,7 +193,7 @@ generator (S gen) = SG $ \pool -> do
   ref <- newIORef (Ready undefined)
 
   let  next p = ($pool).unSG =<< gen p
-       
+
        sample p (Ready _)  = next p >>= \x' -> writeIORef ref (Aged x' x') >> return x'
        sample _ (Aged _ x) = return x
        sample _ _          = error "sampling eror: generator"
@@ -277,7 +277,7 @@ instance Show (Signal p a) where
 
 instance Eq (Signal p a) where
   _ == _ = False
-  
+
 {-| Error message for unimplemented instance functions. -}
 
 unimp :: String -> a

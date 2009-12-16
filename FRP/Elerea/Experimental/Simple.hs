@@ -171,7 +171,7 @@ instance Functor SignalGen where
 instance Applicative SignalGen where
   pure = return
   (<*>) = ap
-        
+
 instance Monad SignalGen where
   return = SG . const . return
   SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
@@ -220,7 +220,7 @@ addSignal sample update ref pool = do
        sig = S $ readIORef ref >>= \v -> case v of
                Ready x      -> sample x
                Updated _ x  -> return x
-  
+
   updateActions <- mkWeak sig (upd,fin) Nothing
   modifyIORef pool (updateActions:)
   return sig
@@ -270,7 +270,7 @@ generator :: Signal (SignalGen a) -- ^ the signal of generators to run
           -> SignalGen (Signal a) -- ^ the signal of generated structures
 generator (S s) = SG $ \pool -> do
   ref <- newIORef (Ready undefined)
-  
+
   let sample = do  SG g <- s
                    x <- g pool
                    writeIORef ref (Updated undefined x)
@@ -343,7 +343,7 @@ instance Show (Signal a) where
 
 instance Eq (Signal a) where
   _ == _ = False
-  
+
 {-| Error message for unimplemented instance functions. -}
 
 unimp :: String -> a
