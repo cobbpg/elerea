@@ -2,10 +2,11 @@
 
 {-|
 
-This module provides efficient higher-order discrete signals.  For a
-non entirely trivial example, let's create a dynamic collection of
-countdown timers, where each expired timer is removed from the
-collection.  First of all, we'll need a simple tester function:
+This module provides leak-free and referentially transparent
+higher-order discrete signals.  For a not entirely trivial example,
+let's create a dynamic collection of countdown timers, where each
+expired timer is removed from the collection.  First of all, we'll
+need a simple tester function:
 
 @
  sigtest gen = 'replicateM' 15 '=<<' 'start' gen
@@ -131,6 +132,7 @@ module FRP.Elerea.Experimental.Simple
     , memo
     , stateful
     , transfer
+    , noise
     ) where
 
 import Control.Applicative
@@ -139,30 +141,27 @@ import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
 import System.Mem.Weak
+import System.Random.Mersenne
 
-{-| A signal can be thought of as a function of type @Nat -> a@, where
-the argument is the sampling time, and the 'Monad' instance agrees
-with the intuition (bind corresponds to extracting the current
-sample). -}
-
+-- | A signal can be thought of as a function of type @Nat -> a@,
+-- where the argument is the sampling time, and the 'Monad' instance
+-- agrees with the intuition (bind corresponds to extracting the
+-- current sample).
 newtype Signal a = S (IO a) deriving (Functor, Applicative, Monad)
 
-{-| A dynamic set of actions to update a network without breaking
-consistency. -}
-
+-- | A dynamic set of actions to update a network without breaking
+-- consistency.
 type UpdatePool = [Weak (IO (),IO ())]
 
-{-| A signal generator is the only source of stateful signals.  It can
-be thought of as a function of type @Nat -> a@, where the result is an
-arbitrary data structure that can potentially contain new signals, and
-the argument is the creation time of these new signals.  It exposes
-the 'MonadFix' interface, which makes it possible to define signals in
-terms of each other. -}
-
+-- | A signal generator is the only source of stateful signals.  It
+-- can be thought of as a function of type @Nat -> a@, where the
+-- result is an arbitrary data structure that can potentially contain
+-- new signals, and the argument is the creation time of these new
+-- signals.  It exposes the 'MonadFix' interface, which makes it
+-- possible to define signals in terms of each other.
 newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IO a }
 
-{-| The phases every signal goes through during a superstep. -}
-
+-- | The phases every signal goes through during a superstep.
 data Phase a = Ready a | Updated a a
 
 instance Functor SignalGen where
@@ -179,13 +178,12 @@ instance Monad SignalGen where
 instance MonadFix SignalGen where
   mfix f = SG $ \p -> mfix (($p).unSG.f)
 
-{-| Embedding a signal into an 'IO' environment.  Repeated calls to
-the computation returned cause the whole network to be updated, and
-the current sample of the top-level signal is produced as a result.
-This is the only way to extract a signal generator outside the
-network, and it is equivalent to passing zero to the function
-representing the generator. -}
-
+-- | Embedding a signal into an 'IO' environment.  Repeated calls to
+-- the computation returned cause the whole network to be updated, and
+-- the current sample of the top-level signal is produced as a
+-- result. This is the only way to extract a signal generator outside
+-- the network, and it is equivalent to passing zero to the function
+-- representing the generator.
 start :: SignalGen (Signal a) -- ^ the generator of the top-level signal
       -> IO (IO a)            -- ^ the computation to sample the signal
 start (SG gen) = do
@@ -200,9 +198,8 @@ start (SG gen) = do
     mapM_ snd acts
     return res
 
-{-| Auxiliary function used by all the primitives that create a
-mutable variable. -}
-
+-- | Auxiliary function used by all the primitives that create a
+-- mutable variable.
 addSignal :: (a -> IO a)      -- ^ sampling function
           -> (a -> IO ())     -- ^ aging function
           -> IORef (Phase a)  -- ^ the mutable variable behind the signal
@@ -225,21 +222,21 @@ addSignal sample update ref pool = do
   modifyIORef pool (updateActions:)
   return sig
 
-{-| The 'delay' transfer function emits the value of a signal from the
-previous superstep, starting with the filler value given in the first
-argument.  It can be thought of as the following function (which
-should also make it clear why the return value is 'SignalGen'):
-
-@
- delay x0 s t_start t_sample
-   | t_start == t_sample = x0
-   | t_start < t_sample  = s (t_sample-1)
-   | otherwise           = error \"Premature sample!\"
-@
-
-The way signal generators are extracted ensures that the error can
-never happen. -}
-
+-- | The 'delay' transfer function emits the value of a signal from
+-- the previous superstep, starting with the filler value given in the
+-- first argument.  It can be thought of as the following function
+-- (which should also make it clear why the return value is
+-- 'SignalGen'):
+--
+-- @
+--  delay x0 s t_start t_sample
+--    | t_start == t_sample = x0
+--    | t_start < t_sample  = s (t_sample-1)
+--    | otherwise           = error \"Premature sample!\"
+-- @
+--
+-- The way signal generators are extracted ensures that the error can
+-- never happen.
 delay :: a                    -- ^ initial output at creation time
       -> Signal a             -- ^ the signal to delay
       -> SignalGen (Signal a) -- ^ the delayed signal
@@ -250,22 +247,19 @@ delay x0 (S s) = SG $ \pool -> do
 
   addSignal return update ref pool
 
-{-| A reactive signal that takes the value to output from a signal
-generator carried by its input with the sampling time provided as the
-time of generation.  It is possible to create new signals in the
-monad.  It can be thought of as the following function:
-
-@
- generator g t_start t_sample = g t_sample t_sample
-@
-
-It has to live in the 'SignalGen' monad, because it needs to maintain
-an internal state to be able to cache the current sample for
-efficiency reasons. However, this state is not carried between
-samples, therefore starting time doesn't matter and can be ignored.
-
--}
-
+-- | A reactive signal that takes the value to output from a signal
+-- generator carried by its input with the sampling time provided as
+-- the time of generation.  It is possible to create new signals in
+-- the monad.  It can be thought of as the following function:
+--
+-- @
+--  generator g t_start t_sample = g t_sample t_sample
+-- @
+--
+-- It has to live in the 'SignalGen' monad, because it needs to
+-- maintain an internal state to be able to cache the current sample
+-- for efficiency reasons. However, this state is not carried between
+-- samples, therefore starting time doesn't matter and can be ignored.
 generator :: Signal (SignalGen a) -- ^ the signal of generators to run
           -> SignalGen (Signal a) -- ^ the signal of generated structures
 generator (S s) = SG $ \pool -> do
@@ -278,10 +272,10 @@ generator (S s) = SG $ \pool -> do
 
   addSignal (const sample) (const (sample >> return ())) ref pool
 
-{-| Memoising combinator.  It can be used to cache results of
-applicative combinators in case they are used in several places.  It
-is observationally equivalent to 'return' in the 'SignalGen' monad. -}
-
+-- | Memoising combinator.  It can be used to cache results of
+-- applicative combinators in case they are used in several places.
+-- It is observationally equivalent to 'return' in the 'SignalGen'
+-- monad.
 memo :: Signal a             -- ^ the signal to cache
      -> SignalGen (Signal a) -- ^ a signal observationally equivalent to the argument
 memo (S s) = SG $ \pool -> do
@@ -291,61 +285,61 @@ memo (S s) = SG $ \pool -> do
 
   addSignal (const sample) (const (sample >> return ())) ref pool
 
-{-| A signal that can be directly fed through the sink function
-returned.  This can be used to attach the network to the outer
-world. -}
-
+-- | A signal that can be directly fed through the sink function
+-- returned.  This can be used to attach the network to the outer
+-- world.
 external :: a                         -- ^ initial value
          -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
 external x = do
   ref <- newIORef x
   return (S (readIORef ref), writeIORef ref)
 
-{-| A pure stateful signal.  The initial state is the first output,
-and every subsequent state is derived from the preceding one by
-applying a pure transformation.  It is equivalent to the following
-expression:
-
-@
- stateful x0 f = 'mfix' $ \sig -> 'delay' x0 (f '<$>' sig)
-@
--}
-
+-- | A pure stateful signal.  The initial state is the first output,
+-- and every subsequent state is derived from the preceding one by
+-- applying a pure transformation.  It is equivalent to the following
+-- expression:
+--
+-- @
+--  stateful x0 f = 'mfix' $ \sig -> 'delay' x0 (f '<$>' sig)
+-- @
 stateful :: a                    -- ^ initial state
          -> (a -> a)             -- ^ state transformation
          -> SignalGen (Signal a)
 stateful x0 f = mfix $ \sig -> delay x0 (f <$> sig)
 
-{-| A stateful transfer function.  The current input affects the
-current output, i.e. the initial state given in the first argument is
-considered to appear before the first output, and can never be
-observed, and subsequent states are determined by combining the
-preceding state with the current output of the input signal using the
-function supplied.  It is equivalent to the following expression:
-
-@
- transfer x0 f s = 'mfix' $ \sig -> 'liftA2' f s '<$>' 'delay' x0 sig
-@
--}
-
+-- | A stateful transfer function.  The current input affects the
+-- current output, i.e. the initial state given in the first argument
+-- is considered to appear before the first output, and can never be
+-- observed, and subsequent states are determined by combining the
+-- preceding state with the current output of the input signal using
+-- the function supplied.  It is equivalent to the following
+-- expression:
+--
+-- @
+--  transfer x0 f s = 'mfix' $ \sig -> 'liftA2' f s '<$>' 'delay' x0 sig
+-- @
 transfer :: a                    -- ^ initial internal state
          -> (t -> a -> a)        -- ^ state updater function
          -> Signal t             -- ^ input signal
          -> SignalGen (Signal a)
 transfer x0 f s = mfix $ \sig -> liftA2 f s <$> delay x0 sig
 
-{-| The @Show@ instance is only defined for the sake of 'Num'... -}
+-- | A random signal.  For efficiency reasons it is not guaranteed to
+-- read the same value when sampled several times in the same
+-- superstep.  If you need consistent noise input, you can produce it
+-- through an 'external' signal from whatever source you prefer.
+noise :: MTRandom a => Signal a
+noise = S randomIO
 
+-- The Show instance is only defined for the sake of Num...
 instance Show (Signal a) where
   showsPrec _ _ s = "<SIGNAL>" ++ s
 
-{-| Equality test is impossible. -}
-
+-- Equality test is impossible.
 instance Eq (Signal a) where
   _ == _ = False
 
-{-| Error message for unimplemented instance functions. -}
-
+-- Error message for unimplemented instance functions.
 unimp :: String -> a
 unimp = error . ("Signal: "++)
 
