@@ -374,15 +374,15 @@ age (S r) dt = do
                         SNA sf sx             -> age sf dt >> age sx dt
                         SNH ss r              -> age ss dt >> readIORef r >>= \s -> age s dt
                         SNM b sm              -> age b dt >> age sm dt
-                        SND _ s               -> age s dt 
+                        SND _ s               -> age s dt
                         SNKA s l              -> age s dt >> age l dt
-                        SNF1 _ s              -> age s dt 
+                        SNF1 _ s              -> age s dt
                         SNF2 _ s1 s2          -> age s1 dt >> age s2 dt
                         SNF3 _ s1 s2 s3       -> age s1 dt >> age s2 dt >> age s3 dt
                         SNF4 _ s1 s2 s3 s4    -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt
                         SNF5 _ s1 s2 s3 s4 s5 -> age s1 dt >> age s2 dt >> age s3 dt >> age s4 dt >> age s5 dt
                         _                     -> return ()
-    Aged _ _    -> return () 
+    Aged _ _    -> return ()
     _           -> error "Inconsistent state: signal not sampled properly!"
 
 {-| Finalising aged signals for the next round. -}
@@ -398,9 +398,9 @@ commit (S r) = do
                      SNA sf sx             -> commit sf >> commit sx
                      SNH ss r              -> commit ss >> readIORef r >>= \s -> commit s
                      SNM b sm              -> commit b >> commit sm
-                     SND _ s               -> commit s 
+                     SND _ s               -> commit s
                      SNKA s l              -> commit s >> commit l
-                     SNF1 _ s              -> commit s 
+                     SNF1 _ s              -> commit s
                      SNF2 _ s1 s2          -> commit s1 >> commit s2
                      SNF3 _ s1 s2 s3       -> commit s1 >> commit s2 >> commit s3
                      SNF4 _ s1 s2 s3 s4    -> commit s1 >> commit s2 >> commit s3 >> commit s4

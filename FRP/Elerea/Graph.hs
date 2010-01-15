@@ -45,7 +45,7 @@ buildStore st (S r) = do
   p <- getPtr r
   case Map.lookup p st of
     Just _  -> return (p,st)
-    Nothing -> do Ready s <- readIORef r  
+    Nothing -> do Ready s <- readIORef r
                   st' <- insertSignal st p s
                   return (p,st')
 

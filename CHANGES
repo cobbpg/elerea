@@ -1,3 +1,6 @@
+1.2.2 - 100115
+* added noise signals and the getRandom primitive (using mersenne-random)
+
 1.2.1 - 091204
 * modified the &&@ and ||@ operators to short-circuit
 

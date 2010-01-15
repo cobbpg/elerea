@@ -133,6 +133,7 @@ module FRP.Elerea.Experimental.Simple
     , stateful
     , transfer
     , noise
+    , getRandom
     ) where
 
 import Control.Applicative
@@ -330,6 +331,10 @@ transfer x0 f s = mfix $ \sig -> liftA2 f s <$> delay x0 sig
 -- through an 'external' signal from whatever source you prefer.
 noise :: MTRandom a => Signal a
 noise = S randomIO
+
+-- | A random source within the 'SignalGen' monad.
+getRandom :: MTRandom a => SignalGen a
+getRandom = SG (const randomIO)
 
 -- The Show instance is only defined for the sake of Num...
 instance Show (Signal a) where

@@ -36,6 +36,8 @@ module FRP.Elerea.Experimental.Delayed
     , transfer
     , memo
     , generator
+    , noise
+    , getRandom
     , debug
     ) where
 
@@ -45,27 +47,24 @@ import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
 import System.Mem.Weak
+import System.Random.Mersenne
 
-{-| A signal can be thought of as a function of type @Nat -> a@, and
-its 'Monad' instance agrees with that intuition.  Internally, is
-represented by a sampling computation. -}
-
+-- | A signal can be thought of as a function of type @Nat -> a@, and
+-- its 'Monad' instance agrees with that intuition.  Internally, is
+-- represented by a sampling computation.
 newtype Signal p a = S { unS :: p -> IO a }
 
-{-| A dynamic set of actions to update a network without breaking
-consistency. -}
-
+-- | A dynamic set of actions to update a network without breaking
+-- consistency.
 type UpdatePool p = [Weak (p -> IO (), IO ())]
 
-{-| A signal generator is the only source of stateful signals.
-Internally, computes a signal structure and adds the new variables to
-an existing update pool. -}
-
+-- | A signal generator is the only source of stateful signals.
+-- Internally, computes a signal structure and adds the new variables
+-- to an existing update pool.
 newtype SignalGen p a = SG { unSG :: IORef (UpdatePool p) -> IO a }
 
-{-| The phases every signal goes through during a superstep: before or
-after sampling. -}
-
+-- | The phases every signal goes through during a superstep: before
+-- or after sampling.
 data Phase s a = Ready s | Sampling s | Aged s a
 
 instance Functor (Signal p) where
@@ -93,13 +92,12 @@ instance Monad (SignalGen p) where
 instance MonadFix (SignalGen p) where
   mfix f = SG $ \p -> mfix (($p).unSG.f)
 
-{-| Embedding a signal into an 'IO' environment.  Repeated calls to
-the computation returned cause the whole network to be updated, and
-the current sample of the top-level signal is produced as a
-result. The computation accepts a global parameter that will be
-distributed to all signals.  For instance, this can be the time step,
-if we want to model continuous-time signals. -}
-
+-- | Embedding a signal into an 'IO' environment.  Repeated calls to
+-- the computation returned cause the whole network to be updated, and
+-- the current sample of the top-level signal is produced as a result.
+-- The computation accepts a global parameter that will be distributed
+-- to all signals.  For instance, this can be the time step, if we
+-- want to model continuous-time signals.
 start :: SignalGen p (Signal p a) -- ^ the generator of the top-level signal
       -> IO (p -> IO a)           -- ^ the computation to sample the signal
 start (SG gen) = do
@@ -128,9 +126,8 @@ start (SG gen) = do
     update ptrs [] (return ()) (return ())
     return res
 
-{-| Auxiliary function used by all the primitives that create a
-mutable variable. -}
-
+-- | Auxiliary function used by all the primitives that create a
+-- mutable variable.
 addSignal :: (p -> Phase s a -> IO a)  -- ^ sampling function
           -> (p -> Phase s a -> IO ()) -- ^ aging function
           -> IORef (Phase s a)         -- ^ the mutable variable behind the signal
@@ -146,10 +143,9 @@ addSignal sample age ref pool = do
   modifyIORef pool (update:)
   return sig
 
-{-| The 'delay' transfer function emits the value of a signal from the
-previous superstep, starting with the filler value given in the first
-argument. -}
-
+-- | The 'delay' transfer function emits the value of a signal from
+-- the previous superstep, starting with the filler value given in the
+-- first argument.
 delay :: a                        -- ^ initial output
       -> Signal p a               -- ^ the signal to delay
       -> SignalGen p (Signal p a)
@@ -165,10 +161,9 @@ delay x0 (S s) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| Memoising combinator.  It can be used to cache results of
-applicative combinators in case they are used in several places. Other
-than that, it is equivalent to 'return'. -}
-
+-- | Memoising combinator.  It can be used to cache results of
+-- applicative combinators in case they are used in several places.
+-- Other than that, it is equivalent to 'return'.
 memo :: Signal p a               -- ^ signal to memoise
      -> SignalGen p (Signal p a)
 memo (S s) = SG $ \pool -> do
@@ -183,10 +178,9 @@ memo (S s) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| A reactive signal that takes the value to output from a monad
-carried by its input.  It is possible to create new signals in the
-monad. -}
-
+-- | A reactive signal that takes the value to output from a monad
+-- carried by its input.  It is possible to create new signals in the
+-- monad.
 generator :: Signal p (SignalGen p a) -- ^ a stream of generators to potentially run
           -> SignalGen p (Signal p a)
 generator (S gen) = SG $ \pool -> do
@@ -203,22 +197,20 @@ generator (S gen) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| A signal that can be directly fed through the sink function
-returned.  This can be used to attach the network to the outer world.
-Note that this is optional, as all the input of the network can be fed
-in through the global parameter, although that is not really
-convenient for many signals. -}
-
+-- | A signal that can be directly fed through the sink function
+-- returned.  This can be used to attach the network to the outer
+-- world.  Note that this is optional, as all the input of the network
+-- can be fed in through the global parameter, although that is not
+-- really convenient for many signals.
 external :: a                           -- ^ initial value
          -> IO (Signal p a, a -> IO ()) -- ^ the signal and an IO function to feed it
 external x = do
   ref <- newIORef x
   return (S (const (readIORef ref)), writeIORef ref)
 
-{-| A pure stateful signal.  The initial state is the first output,
-and every following output is calculated from the previous one and the
-value of the global parameter. -}
-
+-- | A pure stateful signal.  The initial state is the first output,
+-- and every following output is calculated from the previous one and
+-- the value of the global parameter.
 stateful :: a -> (p -> a -> a) -> SignalGen p (Signal p a)
 stateful x0 f = SG $ \pool -> do
   ref <- newIORef (Ready x0)
@@ -232,16 +224,15 @@ stateful x0 f = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| A stateful transfer function.  The current input affects the
-current output, i.e. the initial state given in the first argument is
-considered to appear before the first output, and can never be
-observed.  Every output is derived from the current value of the input
-signal, the global parameter and the previous output.  The only
-exception is when a transfer function sits in a loop without a delay.
-In this case, a delay will be inserted at a single place during
-runtime (i.e. the previous output of the node affected will be reused)
-to resolve the circular dependency. -}
-
+-- | A stateful transfer function.  The current input affects the
+-- current output, i.e. the initial state given in the first argument
+-- is considered to appear before the first output, and can never be
+-- observed.  Every output is derived from the current value of the
+-- input signal, the global parameter and the previous output.  The
+-- only exception is when a transfer function sits in a loop without a
+-- delay.  In this case, a delay will be inserted at a single place
+-- during runtime (i.e. the previous output of the node affected will
+-- be reused) to resolve the circular dependency.
 transfer :: a -> (p -> t -> a -> a) -> Signal p t -> SignalGen p (Signal p a)
 transfer x0 f (S s) = SG $ \pool -> do
   ref <- newIORef (Ready x0)
@@ -263,23 +254,30 @@ transfer x0 f (S s) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
-{-| A printing action within the 'SignalGen' monad. -}
+-- | A random signal.  For efficiency reasons it is not guaranteed to
+-- read the same value when sampled several times in the same
+-- superstep.  If you need consistent noise input, you can produce it
+-- through an 'external' signal from whatever source you prefer.
+noise :: MTRandom a => Signal p a
+noise = S (const randomIO)
 
+-- | A random source within the 'SignalGen' monad.
+getRandom :: MTRandom a => SignalGen p a
+getRandom = SG (const randomIO)
+
+-- | A printing action within the 'SignalGen' monad.
 debug :: String -> SignalGen p ()
 debug = SG . const . putStrLn
 
-{-| The @Show@ instance is only defined for the sake of 'Num'... -}
-
+-- | The @Show@ instance is only defined for the sake of 'Num'...
 instance Show (Signal p a) where
   showsPrec _ _ s = "<SIGNAL>" ++ s
 
-{-| Equality test is impossible. -}
-
+-- | Equality test is impossible.
 instance Eq (Signal p a) where
   _ == _ = False
 
-{-| Error message for unimplemented instance functions. -}
-
+-- | Error message for unimplemented instance functions.
 unimp :: String -> a
 unimp = error . ("Signal: "++)
 
