@@ -1,3 +1,7 @@
+1.2.3 - 100131
+* added externalMulti to handle events that can fire several times within a superstep
+* added a cache to the noise signal for safety reasons, so it lives in SignalGen now
+
 1.2.2 - 100115
 * added noise signals and the getRandom primitive (using mersenne-random)
 

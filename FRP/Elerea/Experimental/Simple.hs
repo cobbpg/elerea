@@ -127,6 +127,7 @@ module FRP.Elerea.Experimental.Simple
     , SignalGen
     , start
     , external
+    , externalMulti
     , delay
     , generator
     , memo
@@ -137,6 +138,7 @@ module FRP.Elerea.Experimental.Simple
     ) where
 
 import Control.Applicative
+import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
@@ -295,6 +297,26 @@ external x = do
   ref <- newIORef x
   return (S (readIORef ref), writeIORef ref)
 
+-- | An event-like signal that can be fed through the sink function
+-- returned.  The signal carries a list of values fed in since the
+-- last sampling, i.e. it is constantly [] if the sink is never
+-- invoked.  The order of elements is reversed, so the last value
+-- passed to the sink is the head of the list.  Note that unlike
+-- 'external' this function only returns a generator to be used within
+-- the expression constructing the top-level stream, and this
+-- generator can only be used once.
+externalMulti :: IO (SignalGen (Signal [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
+externalMulti = do
+  var <- newMVar []
+  return (SG $ \pool -> do
+             let sig = S $ readMVar var
+             update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
+             modifyIORef pool (update:)
+             return sig
+         ,\val -> do  vals <- takeMVar var
+                      putMVar var (val:vals)
+         )
+
 -- | A pure stateful signal.  The initial state is the first output,
 -- and every subsequent state is derived from the preceding one by
 -- applying a pure transformation.  It is equivalent to the following
@@ -325,12 +347,9 @@ transfer :: a                    -- ^ initial internal state
          -> SignalGen (Signal a)
 transfer x0 f s = mfix $ \sig -> liftA2 f s <$> delay x0 sig
 
--- | A random signal.  For efficiency reasons it is not guaranteed to
--- read the same value when sampled several times in the same
--- superstep.  If you need consistent noise input, you can produce it
--- through an 'external' signal from whatever source you prefer.
-noise :: MTRandom a => Signal a
-noise = S randomIO
+-- | A random signal.
+noise :: MTRandom a => SignalGen (Signal a)
+noise = memo (S randomIO)
 
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen a

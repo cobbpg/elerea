@@ -31,6 +31,7 @@ module FRP.Elerea.Experimental.Delayed
     , SignalGen
     , start
     , external
+    , externalMulti
     , delay
     , stateful
     , transfer
@@ -42,6 +43,7 @@ module FRP.Elerea.Experimental.Delayed
     ) where
 
 import Control.Applicative
+import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
@@ -208,6 +210,26 @@ external x = do
   ref <- newIORef x
   return (S (const (readIORef ref)), writeIORef ref)
 
+-- | An event-like signal that can be fed through the sink function
+-- returned.  The signal carries a list of values fed in since the
+-- last sampling, i.e. it is constantly [] if the sink is never
+-- invoked.  The order of elements is reversed, so the last value
+-- passed to the sink is the head of the list.  Note that unlike
+-- 'external' this function only returns a generator to be used within
+-- the expression constructing the top-level stream, and this
+-- generator can only be used once.
+externalMulti :: IO (SignalGen p (Signal p [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
+externalMulti = do
+  var <- newMVar []
+  return (SG $ \pool -> do
+             let sig = S $ const (readMVar var)
+             update <- mkWeak sig (const (return ()),takeMVar var >> putMVar var []) Nothing
+             modifyIORef pool (update:)
+             return sig
+         ,\val -> do  vals <- takeMVar var
+                      putMVar var (val:vals)
+         )
+
 -- | A pure stateful signal.  The initial state is the first output,
 -- and every following output is calculated from the previous one and
 -- the value of the global parameter.
@@ -254,12 +276,9 @@ transfer x0 f (S s) = SG $ \pool -> do
 
   addSignal sample age ref pool
 
--- | A random signal.  For efficiency reasons it is not guaranteed to
--- read the same value when sampled several times in the same
--- superstep.  If you need consistent noise input, you can produce it
--- through an 'external' signal from whatever source you prefer.
-noise :: MTRandom a => Signal p a
-noise = S (const randomIO)
+-- | A random signal.
+noise :: MTRandom a => SignalGen p (Signal p a)
+noise = memo (S (const randomIO))
 
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen p a
