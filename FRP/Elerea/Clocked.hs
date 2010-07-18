@@ -18,25 +18,29 @@ delay can be described by the following function:
 @
  delay x0 s (t_start,clk) t_sample
    | t_start == t_sample = x0
-   | t_start < t_sample  = if clk t_sample
+   | t_start \< t_sample  = if clk t_sample
                              then s (t_sample-1)
                              else delay x0 s (t_start (t_sample-1)
-   | otherwise           = error "stream doesn't exist yet"
+   | otherwise           = error \"stream doesn't exist yet\"
 @
 
 A simple example to create counters operating at different rates using
 the same generator:
 
 @
- divisibleBy n x = x `mod` n == 0
+ divisibleBy n x = x \`mod\` n == 0
+@
 
+@
  counter = stateful 0 (+1)
+@
 
+@
  drift = do
-   time <- counter
-   c1 <- withClock (divisibleBy 2 <$> time) counter
-   c2 <- withClock (divisibleBy 3 <$> time) counter
-   return ((,) <$> c1 <*> c2)
+   time \<- counter
+   c1 \<- withClock (divisibleBy 2 \<$\> time) counter
+   c2 \<- withClock (divisibleBy 3 \<$\> time) counter
+   return ((,) \<$\> c1 \<*\> c2)
 @
 
 Note that if you want to slow down the drift system defined above, the
@@ -44,25 +48,27 @@ naive approach might lead to surprising results:
 
 @
  slowDrift = do
-   time <- counter
-   withClock (divisibleBy 2 <$> time) drift
+   time \<- counter
+   withClock (divisibleBy 2 \<$\> time) drift
 @
 
-The problem is that the clocks are also slowed down, and their true
-spikes double in length.  This may or may not be what you want.  To
-overcome this problem, we can define a clock oblivious edge detector
-to be used within the definition of drift:
+The problem is that the clocks are also slowed down, and their spikes
+double in length.  This may or may not be what you want.  To overcome
+this problem, we can define a clock oblivious edge detector to be used
+within the definition of @drift@:
 
 @
- edge = withClock (pure True) . transfer False (\b b' -> b && not b')
+ edge = withClock (pure True) . transfer False (\\b b' -> b && not b')
+@
 
+@
  drift = do
-   time <- counter
-   t2 <- edge (divisibleBy 2 <$> time)
-   t3 <- edge (divisibleBy 3 <$> time)
-   c1 <- withClock t2 counter
-   c2 <- withClock t3 counter
-   return ((,) <$> c1 <*> c2)
+   time \<- counter
+   t2 \<- edge (divisibleBy 2 \<$\> time)
+   t3 \<- edge (divisibleBy 3 \<$\> time)
+   c1 \<- withClock t2 counter
+   c2 \<- withClock t3 counter
+   return ((,) \<$\> c1 \<*\> c2)
 @
 
 This works because the 'withClock' function overrides any clock
@@ -227,8 +233,9 @@ generator (S s) = SG $ \pool clk -> do
   addSignal (const sample) (const (sample >> return ())) ref pool
 
 -- | Override the clock used in a generator.  Note that clocks don't
--- nest, i.e. it is possible to provide a fast clock within a
--- generator with a slow associated clock.
+-- interact unless one is used in the definition of the other, i.e. it
+-- is possible to provide a fast clock within a generator with a slow
+-- associated clock.
 withClock :: Signal Bool -> SignalGen a -> SignalGen a
 withClock clk (SG g) = SG $ \pool _ -> g pool clk
 
