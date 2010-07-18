@@ -37,7 +37,7 @@ efficient.
 
 -}
 
-module FRP.Elerea
+module FRP.Elerea.Legacy
     ( DTime, Sink, Signal, SignalMonad
     , createSignal, superstep
     , external
@@ -52,7 +52,7 @@ module FRP.Elerea
 ) where
 
 import Control.Applicative
-import FRP.Elerea.Internal
+import FRP.Elerea.Legacy.Internal
 
 infix  4 ==@, /=@, <@, <=@, >=@, >@
 infixr 3 &&@

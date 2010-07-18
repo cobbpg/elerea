@@ -122,7 +122,7 @@ substitute the explicit lifting.  For instance, it allows us to define
 
 -}
 
-module FRP.Elerea.Experimental.Simple
+module FRP.Elerea.Simple
     ( Signal
     , SignalGen
     , start

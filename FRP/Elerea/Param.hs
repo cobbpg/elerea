@@ -30,7 +30,7 @@ following ways:
 
 -}
 
-module FRP.Elerea.Experimental.Param
+module FRP.Elerea.Param
     ( Signal
     , SignalGen
     , start

@@ -7,15 +7,13 @@ This module provides some means to visualise the signal structure.
 
 -}
 
-module FRP.Elerea.Graph (signalToDot) where
+module FRP.Elerea.Legacy.Graph (signalToDot) where
 
-import Control.Monad
 import Data.IORef
-import Data.Maybe
 import qualified Data.Map as Map
 import Foreign.Ptr
 import Foreign.StablePtr
-import FRP.Elerea.Internal
+import FRP.Elerea.Legacy.Internal
 
 type Id = Int
 

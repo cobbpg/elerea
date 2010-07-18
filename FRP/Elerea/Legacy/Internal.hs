@@ -54,7 +54,7 @@ reduces the number of nodes in the network.
 
 -}
 
-module FRP.Elerea.Internal where
+module FRP.Elerea.Legacy.Internal where
 
 import Control.Applicative
 import Control.Monad
@@ -439,7 +439,7 @@ sample (SNM b sm)              dt = do c <- signalValue b dt
                                        if c then m else return undefined
 sample (SNE r)                 _  = readIORef r
 sample (SND v _)               _  = return v
-sample (SNKA s l)              dt = do signalValue l dt
+sample (SNKA s l)              dt = do _ <- signalValue l dt
                                        signalValue s dt
 sample (SNF1 f s)              dt = f <$> signalValue s dt
 sample (SNF2 f s1 s2)          dt = liftM2 f (signalValue s1 dt) (signalValue s2 dt)

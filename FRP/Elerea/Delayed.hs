@@ -26,7 +26,7 @@ following ways:
 
 -}
 
-module FRP.Elerea.Experimental.Delayed
+module FRP.Elerea.Delayed
     ( Signal
     , SignalGen
     , start
