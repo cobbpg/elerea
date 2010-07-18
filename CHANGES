@@ -1,5 +1,6 @@
 2.0.0 - 100718
 * moved experimental branch to the top (version 1 went into legacy status)
+* added the clocked version
 
 1.2.3 - 100131
 * added externalMulti to handle events that can fire several times within a superstep

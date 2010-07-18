@@ -42,6 +42,7 @@ Library
     FRP.Elerea.Legacy.Internal
     FRP.Elerea.Simple
     FRP.Elerea.Param
+    FRP.Elerea.Clocked
     FRP.Elerea.Delayed
 
   Build-Depends:       base >= 3 && < 5, containers, mersenne-random
