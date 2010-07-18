@@ -1,10 +1,19 @@
+2.1.0 - 100718
+* reimplemented the parametric variant in a way that doesn't require
+  signals to carry the type of the parameter any more
+* added the ability to extract the global input in the parametric
+  variant
+
 2.0.0 - 100718
-* moved experimental branch to the top (version 1 went into legacy status)
-* added the clocked version
+* moved experimental branch to the top (version 1 went into legacy
+  status)
+* added the clocked variant
 
 1.2.3 - 100131
-* added externalMulti to handle events that can fire several times within a superstep
-* added a cache to the noise signal for safety reasons, so it lives in SignalGen now
+* added externalMulti to handle events that can fire several times
+  within a superstep
+* added a cache to the noise signal for safety reasons, so it lives in
+  SignalGen now
 
 1.2.2 - 100115
 * added noise signals and the getRandom primitive (using mersenne-random)
@@ -13,7 +22,7 @@
 * modified the &&@ and ||@ operators to short-circuit
 
 1.2.0 - 091202
-* added the delayed version to the experimental branch
+* added the delayed variant to the experimental branch
 * renamed storeJust to (-->) in the experimental branch
 
 1.1.0 - 091126
@@ -42,8 +51,10 @@
 
 0.2.0 - 090412
 * removed primitives time and stateless
-* removed default delay on stateful combinators and added experimental cycle detection
-* added some non-primitive combinators: delay, edge, comparisons, logic relations
+* removed default delay on stateful combinators and added experimental
+  cycle detection
+* added some non-primitive combinators: delay, edge, comparisons,
+  logic relations
 * added signal instances for various numeric classes
 
 0.1.0 - 090410

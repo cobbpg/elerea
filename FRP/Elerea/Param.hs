@@ -1,3 +1,5 @@
+{-# LANGUAGE GeneralizedNewtypeDeriving #-}
+
 {-|
 
 This version differs from the simple one in providing an extra
@@ -28,6 +30,9 @@ following ways:
 * the user needs to cache the results of applicative operations to be
   reused in multiple places explicitly using the 'memo' combinator.
 
+* the input can be retrieved as an explicit signal within the
+  SignalGen monad
+
 -}
 
 module FRP.Elerea.Param
@@ -41,6 +46,7 @@ module FRP.Elerea.Param
     , transfer
     , memo
     , generator
+    , input
     , noise
     , getRandom
     , debug
@@ -58,31 +64,20 @@ import System.Random.Mersenne
 -- | A signal can be thought of as a function of type @Nat -> a@, and
 -- its 'Monad' instance agrees with that intuition.  Internally, is
 -- represented by a sampling computation.
-newtype Signal p a = S { unS :: p -> IO a }
+newtype Signal a = S (IO a) deriving (Functor, Applicative, Monad)
 
 -- | A dynamic set of actions to update a network without breaking
 -- consistency.
-type UpdatePool p = [Weak (p -> IO (), IO ())]
+type UpdatePool = [Weak (IO (), IO ())]
 
 -- | A signal generator is the only source of stateful signals.
 -- Internally, computes a signal structure and adds the new variables
 -- to an existing update pool.
-newtype SignalGen p a = SG { unSG :: IORef (UpdatePool p) -> IO a }
+newtype SignalGen p a = SG { unSG :: IORef UpdatePool -> Signal p -> IO a }
 
 -- | The phases every signal goes through during a superstep: before
 -- or after sampling.
 data Phase s a = Ready s | Aged s a
-
-instance Functor (Signal p) where
-  fmap = liftM
-
-instance Applicative (Signal p) where
-  pure = return
-  (<*>) = ap
-
-instance Monad (Signal p) where
-  return = S . const . return
-  S g >>= f = S $ \p -> g p >>= \x -> unS (f x) p
 
 instance Functor (SignalGen p) where
   fmap = liftM
@@ -92,11 +87,11 @@ instance Applicative (SignalGen p) where
   (<*>) = ap
 
 instance Monad (SignalGen p) where
-  return = SG . const . return
-  SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
+  return = SG . const . const . return
+  SG g >>= f = SG $ \p i -> g p i >>= \x -> unSG (f x) p i
 
 instance MonadFix (SignalGen p) where
-  mfix f = SG $ \p -> mfix (($p).unSG.f)
+  mfix f = SG $ \p i -> mfix (($i).($p).unSG.f)
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and
@@ -104,48 +99,50 @@ instance MonadFix (SignalGen p) where
 -- result. The computation accepts a global parameter that will be
 -- distributed to all signals.  For instance, this can be the time
 -- step, if we want to model continuous-time signals.
-start :: SignalGen p (Signal p a) -- ^ the generator of the top-level signal
-      -> IO (p -> IO a)           -- ^ the computation to sample the signal
+start :: SignalGen p (Signal a) -- ^ the generator of the top-level signal
+      -> IO (p -> IO a)         -- ^ the computation to sample the signal
 start (SG gen) = do
   pool <- newIORef []
-  (S sample) <- gen pool
+  (inp,sink) <- external undefined
+  S sample <- gen pool inp
 
   ptrs0 <- readIORef pool
   writeIORef pool []
   (as0,cs0) <- unzip . map fromJust <$> mapM deRefWeak ptrs0
-  let ageStatic param = mapM_ ($param) as0
+  let ageStatic = sequence_ as0
       commitStatic = sequence_ cs0
 
   return $ \param -> do
     let update [] ptrs age commit = do
           writeIORef pool ptrs
-          ageStatic param >> age
+          ageStatic >> age
           commitStatic >> commit
         update (p:ps) ptrs age commit = do
           r <- deRefWeak p
           case r of
             Nothing -> update ps ptrs age commit
-            Just (a,c) -> update ps (p:ptrs) (age >> a param) (commit >> c)
+            Just (a,c) -> update ps (p:ptrs) (age >> a) (commit >> c)
 
-    res <- sample param
+    sink param
+    res <- sample
     ptrs <- readIORef pool
     update ptrs [] (return ()) (return ())
     return res
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.
-addSignal :: (p -> Phase s a -> IO a)  -- ^ sampling function
-          -> (p -> Phase s a -> IO ()) -- ^ aging function
-          -> IORef (Phase s a)         -- ^ the mutable variable behind the signal
-          -> IORef (UpdatePool p)      -- ^ the pool of update actions
-          -> IO (Signal p a)
+addSignal :: (Phase s a -> IO a)  -- ^ sampling function
+          -> (Phase s a -> IO ()) -- ^ aging function
+          -> IORef (Phase s a)    -- ^ the mutable variable behind the signal
+          -> IORef UpdatePool     -- ^ the pool of update actions
+          -> IO (Signal a)
 addSignal sample age ref pool = do
   let  commit (Aged s _)  = Ready s
        commit _           = error "commit error: signal not aged"
 
-       sig = S $ \p -> readIORef ref >>= sample p
+       sig = S $ readIORef ref >>= sample
 
-  update <- mkWeak sig (\p -> readIORef ref >>= age p, modifyIORef ref commit) Nothing
+  update <- mkWeak sig (readIORef ref >>= age, modifyIORef ref commit) Nothing
   modifyIORef pool (update:)
   return sig
 
@@ -153,63 +150,68 @@ addSignal sample age ref pool = do
 -- the previous superstep, starting with the filler value given in the
 -- first argument.
 delay :: a                        -- ^ initial output
-      -> Signal p a               -- ^ the signal to delay
-      -> SignalGen p (Signal p a)
-delay x0 (S s) = SG $ \pool -> do
+      -> Signal a                 -- ^ the signal to delay
+      -> SignalGen p (Signal a)
+delay x0 (S s) = SG $ \pool _ -> do
   ref <- newIORef (Ready x0)
 
-  let  sample _ (Ready x)   = return x
-       sample _ (Aged _ x)  = return x
+  let  sample (Ready x)   = return x
+       sample (Aged _ x)  = return x
 
-       age p (Ready x)  = s p >>= \x' -> x' `seq` writeIORef ref (Aged x' x)
-       age _ _          = return ()
+       age (Ready x)  = s >>= \x' -> x' `seq` writeIORef ref (Aged x' x)
+       age _          = return ()
 
   addSignal sample age ref pool
 
 -- | Memoising combinator.  It can be used to cache results of
 -- applicative combinators in case they are used in several
 -- places. Other than that, it is equivalent to 'return'.
-memo :: Signal p a               -- ^ signal to memoise
-     -> SignalGen p (Signal p a)
-memo (S s) = SG $ \pool -> do
+memo :: Signal a               -- ^ signal to memoise
+     -> SignalGen p (Signal a)
+memo (S s) = SG $ \pool _ -> do
   ref <- newIORef (Ready undefined)
 
-  let  sample p (Ready _)      = s p >>= \x -> writeIORef ref (Aged undefined x) >> return x
-       sample _ (Aged _ x)     = return x
+  let  sample (Ready _)      = s >>= \x -> writeIORef ref (Aged undefined x) >> return x
+       sample (Aged _ x)     = return x
 
-       age p (Ready _)      = s p >>= \x -> writeIORef ref (Aged undefined x)
-       age _ _              = return ()
+       age (Ready _)      = s >>= \x -> writeIORef ref (Aged undefined x)
+       age _              = return ()
 
   addSignal sample age ref pool
 
 -- | A reactive signal that takes the value to output from a monad
 -- carried by its input.  It is possible to create new signals in the
 -- monad.
-generator :: Signal p (SignalGen p a) -- ^ a stream of generators to potentially run
-          -> SignalGen p (Signal p a)
-generator (S gen) = SG $ \pool -> do
+generator :: Signal (SignalGen p a) -- ^ a stream of generators to potentially run
+          -> SignalGen p (Signal a)
+generator (S gen) = SG $ \pool inp -> do
   ref <- newIORef (Ready undefined)
 
-  let  next p = ($pool).unSG =<< gen p
+  let  next = ($inp).($pool).unSG =<< gen
 
-       sample p (Ready _)  = next p >>= \x' -> writeIORef ref (Aged x' x') >> return x'
-       sample _ (Aged _ x) = return x
+       sample (Ready _)  = next >>= \x' -> writeIORef ref (Aged x' x') >> return x'
+       sample (Aged _ x) = return x
 
-       age p (Ready _) = next p >>= \x' -> writeIORef ref (Aged x' x')
-       age _ _         = return ()
+       age (Ready _) = next >>= \x' -> writeIORef ref (Aged x' x')
+       age _         = return ()
 
   addSignal sample age ref pool
+
+-- | The common input signal that is fed through the function returned
+-- by 'start'.
+input :: SignalGen p (Signal p)
+input = SG $ const return
 
 -- | A signal that can be directly fed through the sink function
 -- returned.  This can be used to attach the network to the outer
 -- world.  Note that this is optional, as all the input of the network
 -- can be fed in through the global parameter, although that is not
 -- really convenient for many signals.
-external :: a                           -- ^ initial value
-         -> IO (Signal p a, a -> IO ()) -- ^ the signal and an IO function to feed it
+external :: a                         -- ^ initial value
+         -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
 external x = do
   ref <- newIORef x
-  return (S (const (readIORef ref)), writeIORef ref)
+  return (S (readIORef ref), writeIORef ref)
 
 -- | An event-like signal that can be fed through the sink function
 -- returned.  The signal carries a list of values fed in since the
@@ -219,12 +221,12 @@ external x = do
 -- 'external' this function only returns a generator to be used within
 -- the expression constructing the top-level stream, and this
 -- generator can only be used once.
-externalMulti :: IO (SignalGen p (Signal p [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
+externalMulti :: IO (SignalGen p (Signal [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
 externalMulti = do
   var <- newMVar []
-  return (SG $ \pool -> do
-             let sig = S $ const (readMVar var)
-             update <- mkWeak sig (const (return ()),takeMVar var >> putMVar var []) Nothing
+  return (SG $ \pool _ -> do
+             let sig = S $ readMVar var
+             update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
              modifyIORef pool (update:)
              return sig
          ,\val -> do  vals <- takeMVar var
@@ -234,67 +236,52 @@ externalMulti = do
 -- | A pure stateful signal.  The initial state is the first output,
 -- and every following output is calculated from the previous one and
 -- the value of the global parameter.
-stateful :: a -> (p -> a -> a) -> SignalGen p (Signal p a)
-stateful x0 f = SG $ \pool -> do
-  ref <- newIORef (Ready x0)
-
-  let  sample _ (Ready x)  = return x
-       sample _ (Aged _ x) = return x
-
-       age p (Ready x) = let x' = f p x in x' `seq` writeIORef ref (Aged x' x)
-       age _ _         = return ()
-
-  addSignal sample age ref pool
+stateful :: a                    -- ^ initial state
+         -> (p -> a -> a)        -- ^ state transformation
+         -> SignalGen p (Signal a)
+stateful x0 f = mfix $ \sig -> input >>= \i -> delay x0 (f <$> i <*> sig)
 
 -- | A stateful transfer function.  The current input affects the
 -- current output, i.e. the initial state given in the first argument
 -- is considered to appear before the first output, and can never be
 -- observed.  Every output is derived from the current value of the
 -- input signal, the global parameter and the previous output.
-transfer :: a -> (p -> t -> a -> a) -> Signal p t -> SignalGen p (Signal p a)
-transfer x0 f (S s) = SG $ \pool -> do
-  ref <- newIORef (Ready x0)
-
-  let  sample p (Ready x)  = s p >>= \y -> let x' = f p y x in
-                                            x' `seq` writeIORef ref (Aged x' x') >> return x'
-       sample _ (Aged _ x) = return x
-
-       age p (Ready x) = s p >>= \y -> let x' = f p y x in
-                                        x' `seq` writeIORef ref (Aged x' x')
-       age _ _         = return ()
-
-  addSignal sample age ref pool
+transfer :: a                    -- ^ initial internal state
+         -> (p -> t -> a -> a)   -- ^ state updater function
+         -> Signal t             -- ^ input signal
+         -> SignalGen p (Signal a)
+transfer x0 f s = mfix $ \sig -> input >>= \i -> liftA3 f i s <$> delay x0 sig
 
 -- | A random signal.
-noise :: MTRandom a => SignalGen p (Signal p a)
-noise = memo (S (const randomIO))
+noise :: MTRandom a => SignalGen p (Signal a)
+noise = memo (S randomIO)
 
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen p a
-getRandom = SG (const randomIO)
+getRandom = SG (const (const randomIO))
 
 -- | A printing action within the 'SignalGen' monad.
 debug :: String -> SignalGen p ()
-debug = SG . const . putStrLn
+debug = SG . const . const . putStrLn
 
 -- | The @Show@ instance is only defined for the sake of 'Num'...
-instance Show (Signal p a) where
+instance Show (Signal a) where
   showsPrec _ _ s = "<SIGNAL>" ++ s
 
 -- | Equality test is impossible.
-instance Eq (Signal p a) where
+instance Eq (Signal a) where
   _ == _ = False
 
 -- | Error message for unimplemented instance functions.
 unimp :: String -> a
 unimp = error . ("Signal: "++)
 
-instance Ord t => Ord (Signal p t) where
+instance Ord t => Ord (Signal t) where
   compare = unimp "compare"
   min = liftA2 min
   max = liftA2 max
 
-instance Enum t => Enum (Signal p t) where
+instance Enum t => Enum (Signal t) where
   succ = fmap succ
   pred = fmap pred
   toEnum = pure . toEnum
@@ -304,11 +291,11 @@ instance Enum t => Enum (Signal p t) where
   enumFromTo = unimp "enumFromTo"
   enumFromThenTo = unimp "enumFromThenTo"
 
-instance Bounded t => Bounded (Signal p t) where
+instance Bounded t => Bounded (Signal t) where
   minBound = pure minBound
   maxBound = pure maxBound
 
-instance Num t => Num (Signal p t) where
+instance Num t => Num (Signal t) where
   (+) = liftA2 (+)
   (-) = liftA2 (-)
   (*) = liftA2 (*)
@@ -317,10 +304,10 @@ instance Num t => Num (Signal p t) where
   negate = fmap negate
   fromInteger = pure . fromInteger
 
-instance Real t => Real (Signal p t) where
+instance Real t => Real (Signal t) where
   toRational = unimp "toRational"
 
-instance Integral t => Integral (Signal p t) where
+instance Integral t => Integral (Signal t) where
   quot = liftA2 quot
   rem = liftA2 rem
   div = liftA2 div
@@ -331,12 +318,12 @@ instance Integral t => Integral (Signal p t) where
     where dmab = divMod <$> a <*> b
   toInteger = unimp "toInteger"
 
-instance Fractional t => Fractional (Signal p t) where
+instance Fractional t => Fractional (Signal t) where
   (/) = liftA2 (/)
   recip = fmap recip
   fromRational = pure . fromRational
 
-instance Floating t => Floating (Signal p t) where
+instance Floating t => Floating (Signal t) where
   pi = pure pi
   exp = fmap exp
   sqrt = fmap sqrt
