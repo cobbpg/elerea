@@ -131,10 +131,12 @@ module FRP.Elerea.Simple
     , delay
     , generator
     , memo
+    , until
     , stateful
     , transfer
     , noise
     , getRandom
+    , debug
     ) where
 
 import Control.Applicative
@@ -143,6 +145,7 @@ import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
+import Prelude hiding (until)
 import System.Mem.Weak
 import System.Random.Mersenne
 
@@ -273,7 +276,7 @@ generator (S s) = SG $ \pool -> do
                    writeIORef ref (Updated undefined x)
                    return x
 
-  addSignal (const sample) (const (sample >> return ())) ref pool
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
 -- | Memoising combinator.  It can be used to cache results of
 -- applicative combinators in case they are used in several places.
@@ -286,7 +289,35 @@ memo (S s) = SG $ \pool -> do
 
   let sample = s >>= \x -> writeIORef ref (Updated undefined x) >> return x
 
-  addSignal (const sample) (const (sample >> return ())) ref pool
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | A signal that is true exactly once: the first time the input
+-- signal is true.  Afterwards, it is constantly false, and it holds
+-- no reference to the input signal.  It is observationally equivalent
+-- to the following expression (which would hold onto @s@ forever):
+--
+-- @
+--  until s = do
+--    step <- 'transfer' False (||) s
+--    dstep <- 'delay' False step
+--    return $ 'liftA2' (/=) step dstep
+-- @
+until :: Signal Bool             -- ^ the boolean input signal
+      -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
+until (S s) = SG $ \pool -> do
+  ref <- newIORef (Ready undefined)
+
+  rsmp <- mfix $ \rs -> newIORef $ do
+    x <- s
+    writeIORef ref (Updated undefined x)
+    when x $ writeIORef rs $ do
+      writeIORef ref (Updated undefined False)
+      return False
+    return x
+
+  let sample = join (readIORef rsmp)
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
 -- | A signal that can be directly fed through the sink function
 -- returned.  This can be used to attach the network to the outer
@@ -354,6 +385,10 @@ noise = memo (S randomIO)
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen a
 getRandom = SG (const randomIO)
+
+-- | A printing action within the 'SignalGen' monad.
+debug :: String -> SignalGen ()
+debug = SG . const . putStrLn
 
 -- The Show instance is only defined for the sake of Num...
 instance Show (Signal a) where

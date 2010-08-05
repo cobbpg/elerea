@@ -27,13 +27,12 @@ any 'Fractional' signal looks like this:
  integral x0 s = transfer x0 (\\dt x x0 -> x0+x*realToFrac dt) s
 @
 
-Head to "FRP.Elerea.Internal" for the implementation details.  To get
-a general idea how to use the library, check out the sources in the
-@elerea-examples@ package.
+Head to "FRP.Elerea.Legacy.Internal" for the implementation details.
+To get a general idea how to use the library, check out the sources in
+the @elerea-examples@ package.
 
-The "FRP.Elerea.Experimental" branch provides a similar interface with
-a rather different underlying structure, which is likely to be more
-efficient.
+The "FRP.Elerea" branch provides a similar interface with a rather
+different underlying structure, which is likely to be more efficient.
 
 -}
 

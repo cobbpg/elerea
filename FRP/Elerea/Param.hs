@@ -28,10 +28,10 @@ following ways:
   (i.e. their behaviour doesn't depend on the context any more);
 
 * the user needs to cache the results of applicative operations to be
-  reused in multiple places explicitly using the 'memo' combinator.
+  reused in multiple places explicitly using the 'memo' combinator;
 
 * the input can be retrieved as an explicit signal within the
-  SignalGen monad
+  SignalGen monad, and also overridden for parts of the network.
 
 -}
 
@@ -42,11 +42,13 @@ module FRP.Elerea.Param
     , external
     , externalMulti
     , delay
+    , generator
+    , memo
+    , until
+    , input
+    , embed
     , stateful
     , transfer
-    , memo
-    , generator
-    , input
     , noise
     , getRandom
     , debug
@@ -58,6 +60,7 @@ import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
+import Prelude hiding (until)
 import System.Mem.Weak
 import System.Random.Mersenne
 
@@ -197,10 +200,34 @@ generator (S gen) = SG $ \pool inp -> do
 
   addSignal sample age ref pool
 
+-- | A signal that is true exactly once: the first time the input
+-- signal is true.  Afterwards, it is constantly false, and it holds
+-- no reference to the input signal.
+until :: Signal Bool               -- ^ the boolean input signal
+      -> SignalGen p (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
+until (S s) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  rsmp <- mfix $ \rs -> newIORef $ do
+    x <- s
+    writeIORef ref (Aged undefined x)
+    when x $ writeIORef rs $ do
+      writeIORef ref (Aged undefined False)
+      return False
+    return x
+
+  let sample = join (readIORef rsmp)
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
 -- | The common input signal that is fed through the function returned
--- by 'start'.
+-- by 'start', unless we are in an 'embed'ded generator.
 input :: SignalGen p (Signal p)
 input = SG $ const return
+
+-- | Embed a generator with an overridden input signal.
+embed :: Signal p' -> SignalGen p' a -> SignalGen p a
+embed s (SG g) = SG $ \pool _ -> g pool s
 
 -- | A signal that can be directly fed through the sink function
 -- returned.  This can be used to attach the network to the outer
@@ -235,7 +262,12 @@ externalMulti = do
 
 -- | A pure stateful signal.  The initial state is the first output,
 -- and every following output is calculated from the previous one and
--- the value of the global parameter.
+-- the value of the global parameter (which might have been overridden
+-- by 'embed').  It is equivalent to the following expression:
+--
+-- @
+--  stateful x0 f = 'mfix' $ \sig -> 'input' >>= \i -> 'delay' x0 (f '<$>' i '<*>' sig)
+-- @
 stateful :: a                    -- ^ initial state
          -> (p -> a -> a)        -- ^ state transformation
          -> SignalGen p (Signal a)
@@ -245,7 +277,13 @@ stateful x0 f = mfix $ \sig -> input >>= \i -> delay x0 (f <$> i <*> sig)
 -- current output, i.e. the initial state given in the first argument
 -- is considered to appear before the first output, and can never be
 -- observed.  Every output is derived from the current value of the
--- input signal, the global parameter and the previous output.
+-- input signal, the global parameter (which might have been
+-- overridden by 'embed') and the previous output.  It is equivalent
+-- to the following expression:
+--
+-- @
+--  transfer x0 f s = 'mfix' $ \sig -> 'input' >>= \i -> 'liftA3' f i s '<$>' 'delay' x0 sig
+-- @
 transfer :: a                    -- ^ initial internal state
          -> (p -> t -> a -> a)   -- ^ state updater function
          -> Signal t             -- ^ input signal

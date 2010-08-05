@@ -1,8 +1,12 @@
-2.1.0 - 100718
+2.1.0 - 100805
 * reimplemented the parametric variant in a way that doesn't require
   signals to carry the type of the parameter any more
 * added the ability to extract the global input in the parametric
-  variant
+  variant, and also to override it (input and embed, resp.)
+* added until to be able to define switchers that can truly drop
+  references to old signals
+* added debug printing capability to the simple and clocked variants
+* made a note about possibly deprecating the delayed variant
 
 2.0.0 - 100718
 * moved experimental branch to the top (version 1 went into legacy

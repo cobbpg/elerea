@@ -5,7 +5,7 @@ Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
 Description:
 
- Elerea (Eventless reactivity) is a tiny continuous-time FRP
+ Elerea (Eventless reactivity) is a tiny discrete time FRP
  implementation without the notion of event-based switching and
  sampling, with first-class signals (time-varying values).  Reactivity
  is provided through various higher-order constructs that also allow
@@ -15,15 +15,28 @@ Description:
  Stateful signals can be safely generated at any time through a
  specialised monad, while stateless combinators can be used in a
  purely applicative style.  Elerea signals can be defined recursively,
- and external input is trivial to attach.  A unique feature of the
- library is that cyclic dependencies are detected on the fly and
- resolved by inserting delays dynamically, unless the user does it
- explicitly.
+ and external input is trivial to attach.  The library comes in four
+ major variants:
+ .
+ * Simple: signals are plain discrete streams isomorphic to functions
+   over natural numbers;
+ .
+ * Param: adds a globally accessible input signal for convenience;
+ .
+ * Clocked: adds the ability to freeze whole subnetworks at will;
+ .
+ * Delayed: attempts to resolve instantaneous dependency cycles
+   (i.e. cycles without a delay); this variant is likely to be
+   deprecated in the near future.
+ .
+ The first three variants come with precise denotational semantics.
  .
  This is a minimal library that defines only some basic primitives,
  and you are advised to install @elerea-examples@ as well to get an
  idea how to build non-trivial systems with it.  The examples are
  separated in order to minimise the dependencies of the core library.
+ The @dow@ package contains a full game built on top of the simple
+ variant.
 
 Author:              Patai Gergely
 Maintainer:          Patai Gergely (patai@iit.bme.hu)

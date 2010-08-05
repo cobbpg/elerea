@@ -3,7 +3,7 @@
 {-|
 
 This version differs from the simple one in adding associated freeze
-control signals ("clocks") to stateful entities to be able to pause
+control signals (\'clocks\') to stateful entities to be able to pause
 entire subnetworks without having to write all the low-level logic
 explicitly.  The clocks are fixed to signals upon their creation, and
 the 'withClock' function can be used to specify the common clock for
@@ -84,12 +84,14 @@ module FRP.Elerea.Clocked
     , externalMulti
     , delay
     , generator
-    , withClock
     , memo
+    , until
+    , withClock
     , stateful
     , transfer
     , noise
     , getRandom
+    , debug
     ) where
 
 import Control.Applicative
@@ -98,6 +100,7 @@ import Control.Monad
 import Control.Monad.Fix
 import Data.IORef
 import Data.Maybe
+import Prelude hiding (until)
 import System.Mem.Weak
 import System.Random.Mersenne
 
@@ -252,6 +255,28 @@ memo (S s) = SG $ \pool _ -> do
 
   addSignal (const sample) (const (sample >> return ())) ref pool
 
+-- | A signal that is true exactly once: the first time the input
+-- signal is true.  Afterwards, it is constantly false, and it holds
+-- no reference to the input signal.  Note that 'until' always follows
+-- the master clock, i.e. the fastest one, therefore it never creates
+-- a long spike of @True@.
+until :: Signal Bool             -- ^ the boolean input signal
+      -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
+until (S s) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  rsmp <- mfix $ \rs -> newIORef $ do
+    x <- s
+    writeIORef ref (Updated undefined x)
+    when x $ writeIORef rs $ do
+      writeIORef ref (Updated undefined False)
+      return False
+    return x
+
+  let sample = join (readIORef rsmp)
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
 -- | A signal that can be directly fed through the sink function
 -- returned.  This can be used to attach the network to the outer
 -- world.
@@ -318,6 +343,10 @@ noise = memo (S randomIO)
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen a
 getRandom = SG (const (const randomIO))
+
+-- | A printing action within the 'SignalGen' monad.
+debug :: String -> SignalGen ()
+debug = SG . const . const . putStrLn
 
 -- The Show instance is only defined for the sake of Num...
 instance Show (Signal a) where
