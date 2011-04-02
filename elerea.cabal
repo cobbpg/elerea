@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             2.1.0
+Version:             2.2.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -10,12 +10,13 @@ Description:
  sampling, with first-class signals (time-varying values).  Reactivity
  is provided through various higher-order constructs that also allow
  the user to work with arbitrary time-varying structures containing
- live signals.
+ live signals.  Signals have precise and simple denotational
+ semantics.
  .
  Stateful signals can be safely generated at any time through a
- specialised monad, while stateless combinators can be used in a
+ monadic interface, while stateless combinators can be used in a
  purely applicative style.  Elerea signals can be defined recursively,
- and external input is trivial to attach.  The library comes in four
+ and external input is trivial to attach.  The library comes in three
  major variants:
  .
  * Simple: signals are plain discrete streams isomorphic to functions
@@ -23,13 +24,7 @@ Description:
  .
  * Param: adds a globally accessible input signal for convenience;
  .
- * Clocked: adds the ability to freeze whole subnetworks at will;
- .
- * Delayed: attempts to resolve instantaneous dependency cycles
-   (i.e. cycles without a delay); this variant is likely to be
-   deprecated in the near future.
- .
- The first three variants come with precise denotational semantics.
+ * Clocked: adds the ability to freeze whole subnetworks at will.
  .
  This is a minimal library that defines only some basic primitives,
  and you are advised to install @elerea-examples@ as well to get an
@@ -37,10 +32,14 @@ Description:
  separated in order to minimise the dependencies of the core library.
  The @dow@ package contains a full game built on top of the simple
  variant.
+ .
+ The basic idea of the implementation is described in the WFLP 2010
+ paper /Efficient and Compositional Higher-Order Streams/
+ (<http://sgate.emt.bme.hu/documents/patai/publications/PataiWFLP2010.pdf>).
 
 Author:              Patai Gergely
 Maintainer:          Patai Gergely (patai@iit.bme.hu)
-Copyright:           (c) 2009, Patai Gergely
+Copyright:           (c) 2009-2011, Patai Gergely
 License:             BSD3
 License-File:        LICENSE
 Stability:           experimental
@@ -50,13 +49,14 @@ Extra-Source-Files:
 
 Library
   Exposed-Modules:
+    FRP.Elerea
     FRP.Elerea.Legacy
     FRP.Elerea.Legacy.Graph
     FRP.Elerea.Legacy.Internal
+    FRP.Elerea.Legacy.Delayed
     FRP.Elerea.Simple
     FRP.Elerea.Param
     FRP.Elerea.Clocked
-    FRP.Elerea.Delayed
 
-  Build-Depends:       base >= 3 && < 5, containers, mersenne-random
+  Build-Depends:       base >= 4 && < 5, containers, mersenne-random
   ghc-options:         -Wall -O2

@@ -1,15 +1,15 @@
 {-|
 
-Note: this module is likely to be deprecated in the near future,
-because automatic delays are ill-defined, and not very useful in
-practice anyway.  Experience with the library suggests that
-instantaneous loops are relatively easy to avoid.
+Note: this module is deprecated, because automatic delays are
+ill-defined, and not very useful in practice anyway.  Experience with
+the library suggests that instantaneous loops are relatively easy to
+avoid.
 
 This version differs from the parametric one in introducing automatic
 delays.  In practice, if a dependency loop involves a 'transfer'
 primitive, it will be resolved during runtime even if transfer
-functions are not delayed by default.  Also, the until construct is
-missing from this module.
+functions are not delayed by default.  Also, the until construct and
+multi-signal transfer variants are missing from this module.
 
 The interface of this module differs from the old Elerea in the
 following ways:
@@ -32,7 +32,7 @@ following ways:
 
 -}
 
-module FRP.Elerea.Delayed
+module FRP.Elerea.Legacy.Delayed
     ( Signal
     , SignalGen
     , start
