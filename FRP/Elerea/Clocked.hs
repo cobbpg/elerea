@@ -78,9 +78,13 @@ module FRP.Elerea.Clocked
     , memo
     , until
     , withClock
+    , global
     -- * Derived combinators
     , stateful
-    --, transfer
+    , transfer
+    , transfer2
+    , transfer3
+    , transfer4
     -- * Random sources
     , noise
     , getRandom
@@ -116,9 +120,18 @@ import System.Random.Mersenne
 -- 'start'.
 newtype Signal a = S (IO a) deriving (Functor, Applicative, Monad)
 
+-- | A pair of actions to update a signal in two phases: internal
+-- update without changing the output, finalisation (throwing away
+-- previous state).
+type UpdateAction = (IO (), IO ())
+
+-- | A pointer to an update pair.
+data Update = USig (Weak UpdateAction)  -- ^ ordinary signal
+            | UClk UpdateAction         -- ^ clocked subnetwork superstep
+
 -- | A dynamic set of actions to update a network without breaking
 -- consistency.
-type UpdatePool = [Weak (IO (),IO ())]
+type UpdatePool = [Update]
 
 -- | A signal generator is the only source of stateful signals.  It
 -- can be thought of as a function of type @Nat -> a@, where the
@@ -141,24 +154,28 @@ type UpdatePool = [Weak (IO (),IO ())]
 -- are passed a sampling time, while generators expect a start time
 -- that will be the creation time of all the freshly generated
 -- signals in the resulting structure.
-newtype SignalGen a = SG { unSG :: IORef UpdatePool -> Signal Bool -> IO a }
+newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IORef UpdatePool -> IO a }
 
 -- | The phases every signal goes through during a superstep.
 data Phase a = Ready a | Updated a a
 
 instance Functor SignalGen where
-  fmap = (<*>).pure
+    fmap = (<*>).pure
 
 instance Applicative SignalGen where
-  pure = return
-  (<*>) = ap
+    pure = return
+    (<*>) = ap
 
 instance Monad SignalGen where
-  return = SG . const . const . return
-  SG g >>= f = SG $ \p c -> g p c >>= \x -> unSG (f x) p c
+    return x = SG $ \_ _ -> return x
+    SG g >>= f = SG $ \p1 p2 -> g p1 p2 >>= \x -> unSG (f x) p1 p2
 
 instance MonadFix SignalGen where
-  mfix f = SG $ \p c -> mfix (($c).($p).unSG.f)
+    mfix f = SG $ \p1 p2 -> mfix (\x -> unSG (f x) p1 p2)
+
+getUpdate :: Update -> IO (Maybe (Update, UpdateAction))
+getUpdate upd@(USig ptr) = (fmap.fmap) ((,) upd) (deRefWeak ptr)
+getUpdate upd@(UClk ua) = return (Just (upd,ua))
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and
@@ -183,16 +200,15 @@ instance MonadFix SignalGen where
 start :: SignalGen (Signal a) -- ^ the generator of the top-level signal
       -> IO (IO a)            -- ^ the computation to sample the signal
 start (SG gen) = do
-  pool <- newIORef []
-  S sample <- gen pool (pure True)
-  return $ do
-    let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
-    res <- sample
-    (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-    writeIORef pool ptrs
-    mapM_ fst acts
-    mapM_ snd acts
-    return res
+    pool <- newIORef []
+    S sample <- gen pool pool
+    return $ do
+        res <- sample
+        (ptrs,acts) <- unzip.catMaybes <$> (mapM getUpdate =<< readIORef pool)
+        writeIORef pool ptrs
+        mapM_ fst acts
+        mapM_ snd acts
+        return res
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.
@@ -202,21 +218,21 @@ addSignal :: (a -> IO a)      -- ^ sampling function
           -> IORef UpdatePool -- ^ the pool of update actions
           -> IO (Signal a)    -- ^ the signal created
 addSignal sample update ref pool = do
-  let  upd = readIORef ref >>= \v -> case v of
-               Ready x  -> update x
-               _        -> return ()
+    let upd = readIORef ref >>= \v -> case v of
+            Ready x -> update x
+            _       -> return ()
 
-       fin = readIORef ref >>= \v -> case v of
-               Updated x _  -> writeIORef ref $! Ready x
-               _            -> error "Signal not updated!"
+        fin = readIORef ref >>= \v -> case v of
+            Updated x _ -> writeIORef ref $! Ready x
+            _           -> error "Signal not updated!"
 
-       sig = S $ readIORef ref >>= \v -> case v of
-               Ready x      -> sample x
-               Updated _ x  -> return x
+        sig = S $ readIORef ref >>= \v -> case v of
+            Ready x     -> sample x
+            Updated _ x -> return x
 
-  updateActions <- mkWeak sig (upd,fin) Nothing
-  modifyIORef pool (updateActions:)
-  return sig
+    updateActions <- mkWeak sig (upd,fin) Nothing
+    modifyIORef pool (USig updateActions:)
+    return sig
 
 -- | The 'delay' combinator is the elementary building block for
 -- adding state to the signal network by constructing delayed versions
@@ -257,14 +273,12 @@ addSignal sample update ref pool = do
 delay :: a                    -- ^ initial output at creation time
       -> Signal a             -- ^ the signal to delay
       -> SignalGen (Signal a) -- ^ the delayed signal
-delay x0 (S s) = SG $ \pool (S clk) -> do
-  ref <- newIORef (Ready x0)
+delay x0 (S s) = SG $ \gpool pool -> do
+    ref <- newIORef (Ready x0)
 
-  let update x = do  x' <- s
-                     c <- clk
-                     x' `seq` writeIORef ref (Updated (if c then x' else x) x)
+    let update x = s >>= \x' -> x' `seq` writeIORef ref (Updated x' x)
 
-  addSignal return update ref pool
+    addSignal return update ref pool
 
 -- | A reactive signal that takes the value to output from a signal
 -- generator carried by its input with the sampling time provided as
@@ -284,7 +298,7 @@ delay x0 (S s) = SG $ \pool (S clk) -> do
 --
 -- It can be thought of as the following function:
 --
--- > generator g t_start s_clock t_sample = g t_sample t_sample s_clock
+-- > generator g t_start s_clock t_sample = g t_sample s_clock t_sample
 --
 -- It has to live in the 'SignalGen' monad, because it needs to
 -- maintain an internal state to be able to cache the current sample
@@ -297,35 +311,27 @@ delay x0 (S s) = SG $ \pool (S clk) -> do
 -- see how it can be used.
 generator :: Signal (SignalGen a) -- ^ the signal of generators to run
           -> SignalGen (Signal a) -- ^ the signal of generated structures
-generator (S s) = SG $ \pool clk -> do
-  ref <- newIORef (Ready undefined)
+generator (S s) = SG $ \gpool pool -> do
+    ref <- newIORef (Ready undefined)
 
-  let sample = do  SG g <- s
-                   x <- g pool clk
-                   writeIORef ref (Updated undefined x)
-                   return x
+    let sample = do
+            SG g <- s
+            x <- g gpool pool
+            writeIORef ref (Updated undefined x)
+            return x
 
-  addSignal (const sample) (const (sample >> return ())) ref pool
-
--- | Override the clock used in a generator.  Note that clocks don't
--- interact unless one is used in the definition of the other, i.e. it
--- is possible to provide a fast clock within a generator with a slow
--- associated clock.  It is equivalent to the following function:
---
--- > withClock s g t_start s_clock = g t_start s
---
--- For instance, the following equivalence holds:
---
--- > withClock (pure False) (stateful x f) == pure x
-withClock :: Signal Bool -> SignalGen a -> SignalGen a
-withClock clk (SG g) = SG $ \pool _ -> g pool clk
+    addSignal (const sample) (const (() <$ sample)) ref gpool
 
 -- | Memoising combinator.  It can be used to cache results of
 -- applicative combinators in case they are used in several places.
--- It is observationally equivalent to 'return' in the 'SignalGen'
--- monad.
+-- Unlike in the simple variant, it is not observationally equivalent
+-- to 'return' in the 'SignalGen' monad, because it only samples its
+-- input signal when the associated clock ticks.  The @memo@
+-- combinator can be modelled by the following function:
 --
--- > memo s = <|s s s s ...|>
+-- > memo s t_start s_clock t_sample
+-- >   | s_clock t_sample = s t_sample
+-- >   | otherwise        = memo s t_start s_clock (t_sample-1)
 --
 -- For instance, if @s = f \<$\> s'@, then @f@ will be recalculated
 -- once for each sampling of @s@.  This can be avoided by writing @s
@@ -335,12 +341,12 @@ withClock clk (SG g) = SG $ \pool _ -> g pool clk
 -- All the functions defined in this module return memoised signals.
 memo :: Signal a             -- ^ the signal to cache
      -> SignalGen (Signal a) -- ^ a signal observationally equivalent to the argument
-memo (S s) = SG $ \pool _ -> do
-  ref <- newIORef (Ready undefined)
+memo (S s) = SG $ \gpool pool -> do
+    ref <- newIORef (Ready undefined)
 
-  let sample = s >>= \x -> writeIORef ref (Updated undefined x) >> return x
+    let sample = s >>= \x -> writeIORef ref (Updated undefined x) >> return x
 
-  addSignal (const sample) (const (sample >> return ())) ref pool
+    addSignal (const sample) (const (() <$ sample)) ref pool
 
 -- | A signal that is true exactly once: the first time the input
 -- signal is true.  Afterwards, it is constantly false, and it holds
@@ -363,7 +369,7 @@ memo (S s) = SG $ \pool _ -> do
 -- It is observationally equivalent to the following expression (which
 -- would hold onto @s@ forever):
 --
--- > until s = withClock (pure True) $ do
+-- > until s = global $ do
 -- >     step <- transfer False (||) s
 -- >     dstep <- delay False step
 -- >     memo (liftA2 (/=) step dstep)
@@ -383,20 +389,58 @@ memo (S s) = SG $ \pool _ -> do
 -- > [(0,False),(1,False),(2,False),(3,True),(4,False),(5,False)]
 until :: Signal Bool             -- ^ the boolean input signal
       -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
-until (S s) = SG $ \pool _ -> do
-  ref <- newIORef (Ready undefined)
+until (S s) = SG $ \gpool pool -> do
+    ref <- newIORef (Ready undefined)
 
-  rsmp <- mfix $ \rs -> newIORef $ do
-    x <- s
-    writeIORef ref (Updated undefined x)
-    when x $ writeIORef rs $ do
-      writeIORef ref (Updated undefined False)
-      return False
-    return x
+    rsmp <- mfix $ \rs -> newIORef $ do
+        x <- s
+        writeIORef ref (Updated undefined x)
+        when x $ writeIORef rs $ do
+            writeIORef ref (Updated undefined False)
+            return False
+        return x
 
-  let sample = join (readIORef rsmp)
+    let sample = join (readIORef rsmp)
 
-  addSignal (const sample) (const (() <$ sample)) ref pool
+    addSignal (const sample) (const (() <$ sample)) ref gpool
+
+-- | Override the clock used in a generator.  Note that clocks don't
+-- interact unless one is used in the definition of the other, i.e. it
+-- is possible to provide a fast clock within a generator with a slow
+-- associated clock.  It is equivalent to the following function:
+--
+-- > withClock s g t_start s_clock = g t_start s
+--
+-- For instance, the following equivalence holds:
+--
+-- > withClock (pure False) (stateful x f) == pure x
+withClock :: Signal Bool -> SignalGen a -> SignalGen a
+withClock clk@(S cs) (SG g) = SG $ \gpool pool -> do
+    pool' <- newIORef []
+    pref <- newIORef Nothing
+
+    let whenc act = cs >>= flip when act
+
+        upd = readIORef pref >>= \mp -> case mp of
+            Nothing -> do
+                (ptrs,acts) <- unzip.catMaybes <$> (mapM getUpdate =<< readIORef pool')
+                writeIORef pool' ptrs
+                writeIORef pref (Just acts)
+                mapM_ fst acts
+            Just _  -> return ()
+
+        fin = readIORef pref >>= \mp -> case mp of
+            Nothing   -> return ()
+            Just acts -> do
+                writeIORef pref Nothing
+                mapM_ snd acts
+
+    modifyIORef gpool (UClk (whenc upd, whenc fin):)
+    g gpool pool'
+
+-- | Equivalent to @withClock (pure True)@, but more efficient.
+global :: SignalGen a -> SignalGen a
+global (SG g) = SG $ \gpool _ -> g gpool gpool
 
 -- | A signal that can be directly fed through the sink function
 -- returned.  This can be used to attach the network to the outer
@@ -426,17 +470,18 @@ until (S s) = SG $ \pool _ -> do
 external :: a                         -- ^ initial value
          -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
 external x = do
-  ref <- newIORef x
-  return (S (readIORef ref), writeIORef ref)
+    ref <- newIORef x
+    return (S (readIORef ref), writeIORef ref)
 
 -- | An event-like signal that can be fed through the sink function
 -- returned.  The signal carries a list of values fed in since the
--- last sampling, i.e. it is constantly @[]@ if the sink is never
--- invoked.  The order of elements is reversed, so the last value
--- passed to the sink is the head of the list.  Note that unlike
--- 'external' this function only returns a generator to be used within
--- the expression constructing the top-level stream, and this
--- generator can only be used once.
+-- last sampling (always synchronised to the top-level samplings
+-- regardless of any associated clock), i.e. it is constantly @[]@ if
+-- the sink is never invoked.  The order of elements is reversed, so
+-- the last value passed to the sink is the head of the list.  Note
+-- that unlike 'external' this function only returns a generator to be
+-- used within the expression constructing the top-level stream, and
+-- this generator can only be used once.
 --
 -- Example:
 --
@@ -457,15 +502,16 @@ external x = do
 -- > [[],[7],[],[2,9]]
 externalMulti :: IO (SignalGen (Signal [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
 externalMulti = do
-  var <- newMVar []
-  return (SG $ \pool _ -> do
-             let sig = S $ readMVar var
-             update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
-             modifyIORef pool (update:)
-             return sig
-         ,\val -> do  vals <- takeMVar var
-                      putMVar var (val:vals)
-         )
+    var <- newMVar []
+    return (SG $ \gpool pool -> do
+                 let sig = S $ readMVar var
+                 update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
+                 modifyIORef gpool (USig update:)
+                 return sig
+           ,\val -> do
+                 vals <- takeMVar var
+                 putMVar var (val:vals)
+           )
 
 -- | A pure stateful signal.  The initial state is the first output,
 -- and every subsequent state is derived from the preceding one by
@@ -488,20 +534,45 @@ stateful :: a                    -- ^ initial state
          -> SignalGen (Signal a)
 stateful x0 f = mfix $ \sig -> delay x0 (f <$> sig)
 
-{-
-
 transfer :: a                    -- ^ initial internal state
          -> (t -> a -> a)        -- ^ state updater function
          -> Signal t             -- ^ input signal
          -> SignalGen (Signal a)
 transfer x0 f s = mfix $ \sig -> do
     sig' <- delay x0 sig
-    -- TODO: we shouldn't apply the function when there is no tick
     memo (liftA2 f s sig')
 
--}
+transfer2 :: a                     -- ^ initial internal state
+          -> (t1 -> t2 -> a -> a)  -- ^ state updater function
+          -> Signal t1             -- ^ input signal 1
+          -> Signal t2             -- ^ input signal 2
+          -> SignalGen (Signal a)
+transfer2 x0 f s1 s2 = mfix $ \sig -> do
+    sig' <- delay x0 sig
+    memo (liftA3 f s1 s2 sig')
 
--- | A random signal.
+transfer3 :: a                           -- ^ initial internal state
+          -> (t1 -> t2 -> t3 -> a -> a)  -- ^ state updater function
+          -> Signal t1                   -- ^ input signal 1
+          -> Signal t2                   -- ^ input signal 2
+          -> Signal t3                   -- ^ input signal 3
+          -> SignalGen (Signal a)
+transfer3 x0 f s1 s2 s3 = mfix $ \sig -> do
+    sig' <- delay x0 sig
+    memo (liftM4 f s1 s2 s3 sig')
+
+transfer4 :: a                                 -- ^ initial internal state
+          -> (t1 -> t2 -> t3 -> t4 -> a -> a)  -- ^ state updater function
+          -> Signal t1                         -- ^ input signal 1
+          -> Signal t2                         -- ^ input signal 2
+          -> Signal t3                         -- ^ input signal 3
+          -> Signal t4                         -- ^ input signal 4
+          -> SignalGen (Signal a)
+transfer4 x0 f s1 s2 s3 s4 = mfix $ \sig -> do
+    sig' <- delay x0 sig
+    memo (liftM5 f s1 s2 s3 s4 sig')
+
+-- | A random signal.  It is affected by the associated clock.
 --
 -- Example:
 --
@@ -518,87 +589,85 @@ noise = memo (S randomIO)
 
 -- | A random source within the 'SignalGen' monad.
 getRandom :: MTRandom a => SignalGen a
-getRandom = SG (const (const randomIO))
+getRandom = SG $ \_ _ -> randomIO
 
 -- | A printing action within the 'SignalGen' monad.
 debug :: String -> SignalGen ()
-debug = SG . const . const . putStrLn
+debug s = SG $ \_ _ -> putStrLn s
 
--- | The Show instance is only defined for the sake of Num...
 instance Show (Signal a) where
-  showsPrec _ _ s = "<SIGNAL>" ++ s
+    showsPrec _ _ s = "<SIGNAL>" ++ s
 
--- | Equality test is impossible.
 instance Eq (Signal a) where
-  _ == _ = False
+    _ == _ = False
 
 -- | Error message for unimplemented instance functions.
 unimp :: String -> a
 unimp = error . ("Signal: "++)
 
 instance Ord t => Ord (Signal t) where
-  compare = unimp "compare"
-  min = liftA2 min
-  max = liftA2 max
+    compare = unimp "compare"
+    min = liftA2 min
+    max = liftA2 max
 
 instance Enum t => Enum (Signal t) where
-  succ = fmap succ
-  pred = fmap pred
-  toEnum = pure . toEnum
-  fromEnum = unimp "fromEnum"
-  enumFrom = unimp "enumFrom"
-  enumFromThen = unimp "enumFromThen"
-  enumFromTo = unimp "enumFromTo"
-  enumFromThenTo = unimp "enumFromThenTo"
+    succ = fmap succ
+    pred = fmap pred
+    toEnum = pure . toEnum
+    fromEnum = unimp "fromEnum"
+    enumFrom = unimp "enumFrom"
+    enumFromThen = unimp "enumFromThen"
+    enumFromTo = unimp "enumFromTo"
+    enumFromThenTo = unimp "enumFromThenTo"
 
 instance Bounded t => Bounded (Signal t) where
-  minBound = pure minBound
-  maxBound = pure maxBound
+    minBound = pure minBound
+    maxBound = pure maxBound
 
 instance Num t => Num (Signal t) where
-  (+) = liftA2 (+)
-  (-) = liftA2 (-)
-  (*) = liftA2 (*)
-  signum = fmap signum
-  abs = fmap abs
-  negate = fmap negate
-  fromInteger = pure . fromInteger
+    (+) = liftA2 (+)
+    (-) = liftA2 (-)
+    (*) = liftA2 (*)
+    signum = fmap signum
+    abs = fmap abs
+    negate = fmap negate
+    fromInteger = pure . fromInteger
 
 instance Real t => Real (Signal t) where
-  toRational = unimp "toRational"
+    toRational = unimp "toRational"
 
 instance Integral t => Integral (Signal t) where
-  quot = liftA2 quot
-  rem = liftA2 rem
-  div = liftA2 div
-  mod = liftA2 mod
-  quotRem a b = (fst <$> qrab,snd <$> qrab)
-    where qrab = quotRem <$> a <*> b
-  divMod a b = (fst <$> dmab,snd <$> dmab)
-    where dmab = divMod <$> a <*> b
-  toInteger = unimp "toInteger"
+    quot = liftA2 quot
+    rem = liftA2 rem
+    div = liftA2 div
+    mod = liftA2 mod
+    quotRem a b = (fst <$> qrab,snd <$> qrab)
+      where qrab = quotRem <$> a <*> b
+    divMod a b = (fst <$> dmab,snd <$> dmab)
+      where dmab = divMod <$> a <*> b
+    toInteger = unimp "toInteger"
 
 instance Fractional t => Fractional (Signal t) where
-  (/) = liftA2 (/)
-  recip = fmap recip
-  fromRational = pure . fromRational
+    (/) = liftA2 (/)
+    recip = fmap recip
+    fromRational = pure . fromRational
 
 instance Floating t => Floating (Signal t) where
-  pi = pure pi
-  exp = fmap exp
-  sqrt = fmap sqrt
-  log = fmap log
-  (**) = liftA2 (**)
-  logBase = liftA2 logBase
-  sin = fmap sin
-  tan = fmap tan
-  cos = fmap cos
-  asin = fmap asin
-  atan = fmap atan
-  acos = fmap acos
-  sinh = fmap sinh
-  tanh = fmap tanh
-  cosh = fmap cosh
-  asinh = fmap asinh
-  atanh = fmap atanh
-  acosh = fmap acosh
+    pi = pure pi
+    exp = fmap exp
+    sqrt = fmap sqrt
+    log = fmap log
+    (**) = liftA2 (**)
+    logBase = liftA2 logBase
+    sin = fmap sin
+    tan = fmap tan
+    cos = fmap cos
+    asin = fmap asin
+    atan = fmap atan
+    acos = fmap acos
+    sinh = fmap sinh
+    tanh = fmap tanh
+    cosh = fmap cosh
+    asinh = fmap asinh
+    atanh = fmap atanh
+    acosh = fmap acosh
