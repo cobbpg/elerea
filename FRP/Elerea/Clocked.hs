@@ -273,7 +273,7 @@ addSignal sample update ref pool = do
 delay :: a                    -- ^ initial output at creation time
       -> Signal a             -- ^ the signal to delay
       -> SignalGen (Signal a) -- ^ the delayed signal
-delay x0 (S s) = SG $ \gpool pool -> do
+delay x0 (S s) = SG $ \_gpool pool -> do
     ref <- newIORef (Ready x0)
 
     let update x = s >>= \x' -> x' `seq` writeIORef ref (Updated x' x)
@@ -341,7 +341,7 @@ generator (S s) = SG $ \gpool pool -> do
 -- All the functions defined in this module return memoised signals.
 memo :: Signal a             -- ^ the signal to cache
      -> SignalGen (Signal a) -- ^ a signal observationally equivalent to the argument
-memo (S s) = SG $ \gpool pool -> do
+memo (S s) = SG $ \_gpool pool -> do
     ref <- newIORef (Ready undefined)
 
     let sample = s >>= \x -> writeIORef ref (Updated undefined x) >> return x
@@ -389,7 +389,7 @@ memo (S s) = SG $ \gpool pool -> do
 -- > [(0,False),(1,False),(2,False),(3,True),(4,False),(5,False)]
 until :: Signal Bool             -- ^ the boolean input signal
       -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
-until (S s) = SG $ \gpool pool -> do
+until (S s) = SG $ \gpool _pool -> do
     ref <- newIORef (Ready undefined)
 
     rsmp <- mfix $ \rs -> newIORef $ do
@@ -415,7 +415,7 @@ until (S s) = SG $ \gpool pool -> do
 --
 -- > withClock (pure False) (stateful x f) == pure x
 withClock :: Signal Bool -> SignalGen a -> SignalGen a
-withClock clk@(S cs) (SG g) = SG $ \gpool pool -> do
+withClock (S cs) (SG g) = SG $ \gpool _pool -> do
     pool' <- newIORef []
     pref <- newIORef Nothing
 
@@ -503,7 +503,7 @@ external x = do
 externalMulti :: IO (SignalGen (Signal [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
 externalMulti = do
     var <- newMVar []
-    return (SG $ \gpool pool -> do
+    return (SG $ \gpool _pool -> do
                  let sig = S $ readMVar var
                  update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
                  modifyIORef gpool (USig update:)
@@ -534,6 +534,27 @@ stateful :: a                    -- ^ initial state
          -> SignalGen (Signal a)
 stateful x0 f = mfix $ \sig -> delay x0 (f <$> sig)
 
+-- | A stateful transfer function.  The current input affects the
+-- current output, i.e. the initial state given in the first argument
+-- is considered to appear before the first output, and can never be
+-- observed, and subsequent states are determined by combining the
+-- preceding state with the current output of the input signal using
+-- the function supplied.  It is affected by the associated clock like
+-- 'delay': no transformation is performed in the absence of a tick;
+-- see the example at the top.
+--
+-- Example:
+--
+-- > do
+-- >     smp <- start $ do
+-- >         cnt <- stateful 1 (+1)
+-- >         transfer 10 (+) cnt
+-- >     res <- replicateM 5 smp
+-- >     print res
+--
+-- Output:
+--
+-- > [11,13,16,20,25]
 transfer :: a                    -- ^ initial internal state
          -> (t -> a -> a)        -- ^ state updater function
          -> Signal t             -- ^ input signal
@@ -542,6 +563,7 @@ transfer x0 f s = mfix $ \sig -> do
     sig' <- delay x0 sig
     memo (liftA2 f s sig')
 
+-- | A variation of 'transfer' with two input signals.
 transfer2 :: a                     -- ^ initial internal state
           -> (t1 -> t2 -> a -> a)  -- ^ state updater function
           -> Signal t1             -- ^ input signal 1
@@ -551,6 +573,7 @@ transfer2 x0 f s1 s2 = mfix $ \sig -> do
     sig' <- delay x0 sig
     memo (liftA3 f s1 s2 sig')
 
+-- | A variation of 'transfer' with three input signals.
 transfer3 :: a                           -- ^ initial internal state
           -> (t1 -> t2 -> t3 -> a -> a)  -- ^ state updater function
           -> Signal t1                   -- ^ input signal 1
@@ -561,6 +584,7 @@ transfer3 x0 f s1 s2 s3 = mfix $ \sig -> do
     sig' <- delay x0 sig
     memo (liftM4 f s1 s2 s3 sig')
 
+-- | A variation of 'transfer' with four input signals.
 transfer4 :: a                                 -- ^ initial internal state
           -> (t1 -> t2 -> t3 -> t4 -> a -> a)  -- ^ state updater function
           -> Signal t1                         -- ^ input signal 1

@@ -1,3 +1,6 @@
+2.3.0 - 110627
+* reimplemented clocked variant in a correct and more efficient way
+
 2.2.0 - 110402
 * added n-ary transfer functions
 * temporarily removed transfer from the clocked variant
