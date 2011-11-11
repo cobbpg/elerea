@@ -1,3 +1,6 @@
+2.4.0 - 111111
+* added effectful signals to assist library writers
+
 2.3.0 - 110627
 * reimplemented clocked variant in a correct and more efficient way
 

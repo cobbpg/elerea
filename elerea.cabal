@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             2.3.0
+Version:             2.4.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -38,7 +38,7 @@ Description:
  (<http://sgate.emt.bme.hu/documents/patai/publications/PataiWFLP2010.pdf>).
 
 Author:              Patai Gergely
-Maintainer:          Patai Gergely (patai@iit.bme.hu)
+Maintainer:          Patai Gergely (patai.gergely@gmail.com)
 Copyright:           (c) 2009-2011, Patai Gergely
 License:             BSD3
 License-File:        LICENSE
