@@ -20,7 +20,6 @@ module FRP.Elerea.Param
     , start
     , external
     , externalMulti
-    , debug
     -- * Basic building blocks
     , delay
     , generator
@@ -34,9 +33,14 @@ module FRP.Elerea.Param
     , transfer2
     , transfer3
     , transfer4
-    -- * Random sources
-    , noise
-    , getRandom
+    -- * Signals with side effects
+    -- $effectful
+    , execute
+    , effectful
+    , effectful1
+    , effectful2
+    , effectful3
+    , effectful4
     ) where
 
 import Control.Applicative
@@ -47,7 +51,6 @@ import Data.IORef
 import Data.Maybe
 import Prelude hiding (until)
 import System.Mem.Weak
-import System.Random.Mersenne
 
 -- | A signal represents a value changing over time.  It can be
 -- thought of as a function of type @Nat -> a@, where the argument is
@@ -97,9 +100,8 @@ type UpdatePool = [Weak (IO (), IO ())]
 -- signals in the resulting structure.
 newtype SignalGen p a = SG { unSG :: IORef UpdatePool -> Signal p -> IO a }
 
--- | The phases every signal goes through during a superstep: before
--- or after sampling.
-data Phase s a = Ready s | Aged s a
+-- | The phases every signal goes through during a superstep.
+data Phase a = Ready a | Updated a a
 
 instance Functor (SignalGen p) where
   fmap = liftM
@@ -109,11 +111,11 @@ instance Applicative (SignalGen p) where
   (<*>) = ap
 
 instance Monad (SignalGen p) where
-  return = SG . const . const . return
+  return x = SG $ \_ _ -> return x
   SG g >>= f = SG $ \p i -> g p i >>= \x -> unSG (f x) p i
 
 instance MonadFix (SignalGen p) where
-  mfix f = SG $ \p i -> mfix (($i).($p).unSG.f)
+  mfix f = SG $ \p i -> mfix $ \x -> unSG (f x) p i
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and
@@ -141,45 +143,38 @@ start (SG gen) = do
   pool <- newIORef []
   (inp,sink) <- external undefined
   S sample <- gen pool inp
-
-  ptrs0 <- readIORef pool
-  writeIORef pool []
-  (as0,cs0) <- unzip . map fromJust <$> mapM deRefWeak ptrs0
-  let ageStatic = sequence_ as0
-      commitStatic = sequence_ cs0
-
   return $ \param -> do
-    let update [] ptrs age commit = do
-          writeIORef pool ptrs
-          ageStatic >> age
-          commitStatic >> commit
-        update (p:ps) ptrs age commit = do
-          r <- deRefWeak p
-          case r of
-            Nothing -> update ps ptrs age commit
-            Just (a,c) -> update ps (p:ptrs) (age >> a) (commit >> c)
-
+    let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
     sink param
     res <- sample
-    ptrs <- readIORef pool
-    update ptrs [] (return ()) (return ())
+    (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
+    writeIORef pool ptrs
+    mapM_ fst acts
+    mapM_ snd acts
     return res
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.
-addSignal :: (Phase s a -> IO a)  -- ^ sampling function
-          -> (Phase s a -> IO ()) -- ^ aging function
-          -> IORef (Phase s a)    -- ^ the mutable variable behind the signal
-          -> IORef UpdatePool     -- ^ the pool of update actions
+addSignal :: (a -> IO a)      -- ^ sampling function
+          -> (a -> IO ())     -- ^ aging function
+          -> IORef (Phase a)  -- ^ the mutable variable behind the signal
+          -> IORef UpdatePool -- ^ the pool of update actions
           -> IO (Signal a)
-addSignal sample age ref pool = do
-  let  commit (Aged s _)  = Ready s
-       commit _           = error "commit error: signal not aged"
+addSignal sample update ref pool = do
+  let upd = readIORef ref >>= \v -> case v of
+              Ready x -> update x
+              _       -> return ()
 
-       sig = S $ readIORef ref >>= sample
+      fin = readIORef ref >>= \v -> case v of
+              Updated x _ -> writeIORef ref $! Ready x
+              _           -> error "Signal not updated!"
 
-  update <- mkWeak sig (readIORef ref >>= age, modifyIORef ref commit) Nothing
-  modifyIORef pool (update:)
+      sig = S $ readIORef ref >>= \v -> case v of
+              Ready x     -> sample x
+              Updated _ x -> return x
+
+  updateActions <- mkWeak sig (upd,fin) Nothing
+  modifyIORef pool (updateActions:)
   return sig
 
 -- | The 'delay' combinator is the elementary building block for
@@ -226,40 +221,13 @@ delay :: a                        -- ^ initial output
 delay x0 (S s) = SG $ \pool _ -> do
   ref <- newIORef (Ready x0)
 
-  let  sample (Ready x)   = return x
-       sample (Aged _ x)  = return x
+  let update x = s >>= \x' -> x' `seq` writeIORef ref (Updated x' x)
 
-       age (Ready x)  = s >>= \x' -> x' `seq` writeIORef ref (Aged x' x)
-       age _          = return ()
+  addSignal return update ref pool
 
-  addSignal sample age ref pool
-
--- | Memoising combinator.  It can be used to cache results of
--- applicative combinators in case they are used in several places.
--- It is observationally equivalent to 'return' in the 'SignalGen'
--- monad.
---
--- > memo s = <|s s s s ...|>
---
--- For instance, if @s = f \<$\> s'@, then @f@ will be recalculated
--- once for each sampling of @s@.  This can be avoided by writing @s
--- \<- memo (f \<$\> s')@ instead.  However, 'memo' incurs a small
--- overhead, therefore it should not be used blindly.
---
--- All the functions defined in this module return memoised signals.
--- Just like 'delay', it is independent of the global input.
-memo :: Signal a               -- ^ signal to memoise
-     -> SignalGen p (Signal a)
-memo (S s) = SG $ \pool _ -> do
-  ref <- newIORef (Ready undefined)
-
-  let  sample (Ready _)      = s >>= \x -> writeIORef ref (Aged undefined x) >> return x
-       sample (Aged _ x)     = return x
-
-       age (Ready _)      = s >>= \x -> writeIORef ref (Aged undefined x)
-       age _              = return ()
-
-  addSignal sample age ref pool
+-- | Auxiliary function.
+memoise :: IORef (Phase a) -> a -> IO a
+memoise ref x = writeIORef ref (Updated undefined x) >> return x
 
 -- | A reactive signal that takes the value to output from a signal
 -- generator carried by its input with the sampling time provided as
@@ -291,20 +259,37 @@ memo (S s) = SG $ \pool _ -> do
 --
 -- Refer to the longer example at the bottom of "FRP.Elerea.Simple" to
 -- see how it can be used.
-generator :: Signal (SignalGen p a) -- ^ a stream of generators to potentially run
-          -> SignalGen p (Signal a)
-generator (S gen) = SG $ \pool inp -> do
+generator :: Signal (SignalGen p a) -- ^ the signal of generators to run
+          -> SignalGen p (Signal a) -- ^ the signal of generated structures
+generator (S s) = SG $ \pool inp -> do
   ref <- newIORef (Ready undefined)
 
-  let  next = ($inp).($pool).unSG =<< gen
+  let sample = (s >>= \(SG g) -> g pool inp) >>= memoise ref
+  
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
-       sample (Ready _)  = next >>= \x' -> writeIORef ref (Aged x' x') >> return x'
-       sample (Aged _ x) = return x
+-- | Memoising combinator.  It can be used to cache results of
+-- applicative combinators in case they are used in several places.
+-- It is observationally equivalent to 'return' in the 'SignalGen'
+-- monad.
+--
+-- > memo s = <|s s s s ...|>
+--
+-- For instance, if @s = f \<$\> s'@, then @f@ will be recalculated
+-- once for each sampling of @s@.  This can be avoided by writing @s
+-- \<- memo (f \<$\> s')@ instead.  However, 'memo' incurs a small
+-- overhead, therefore it should not be used blindly.
+--
+-- All the functions defined in this module return memoised signals.
+-- Just like 'delay', it is independent of the global input.
+memo :: Signal a               -- ^ the signal to cache
+     -> SignalGen p (Signal a) -- ^ a signal observationally equivalent to the argument
+memo (S s) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
 
-       age (Ready _) = next >>= \x' -> writeIORef ref (Aged x' x')
-       age _         = return ()
+  let sample = s >>= memoise ref
 
-  addSignal sample age ref pool
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
 -- | A signal that is true exactly once: the first time the input
 -- signal is true.  Afterwards, it is constantly false, and it holds
@@ -350,9 +335,9 @@ until (S s) = SG $ \pool _ -> do
 
   rsmp <- mfix $ \rs -> newIORef $ do
     x <- s
-    writeIORef ref (Aged undefined x)
+    writeIORef ref (Updated undefined x)
     when x $ writeIORef rs $ do
-      writeIORef ref (Aged undefined False)
+      writeIORef ref (Updated undefined False)
       return False
     return x
 
@@ -430,8 +415,8 @@ externalMulti = do
              update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
              modifyIORef pool (update:)
              return sig
-         ,\val -> do  vals <- takeMVar var
-                      putMVar var (val:vals)
+         ,\val -> do vals <- takeMVar var
+                     putMVar var (val:vals)
          )
 
 -- | A direct stateful transformation of the input.  The initial state
@@ -522,28 +507,117 @@ transfer4 x0 f s1 s2 s3 s4 = mfix $ \sig -> do
     sig' <- delay x0 sig
     memo (liftM5 f inp s1 s2 s3 s4 `ap` sig')
 
--- | A random signal.
+{- $effectful
+
+The following combinators are primarily aimed at library implementors
+who wish build abstractions to effectful libraries on top of Elerea.
+
+-}
+
+-- | An IO action executed in the 'SignalGen' monad. Can be used as
+-- `liftIO`.
+execute :: IO a -> SignalGen p a
+execute act = SG $ \_ _ -> act
+
+-- | A signal that executes a given IO action once at every sampling.
+--
+-- In essence, this combinator provides cooperative multitasking
+-- capabilities, and its primary purpose is to assist library writers
+-- in wrapping effectful APIs as conceptually pure signals.  If there
+-- are several effectful signals in the system, their order of
+-- execution is undefined and should not be relied on.
 --
 -- Example:
 --
 -- > do
--- >     smp <- start noise :: IO (IO Double)
+-- >     act <- start $ do
+-- >         ref <- execute $ newIORef 0
+-- >         let accum n = do
+-- >                 x <- readIORef ref
+-- >                 putStrLn $ "Accumulator: " ++ show x
+-- >                 writeIORef ref $! x+n
+-- >                 return ()
+-- >         effectful1 accum =<< input
+-- >     forM_ [4,9,2,1,5] act
+--
+-- Output:
+--
+-- > Accumulator: 0
+-- > Accumulator: 4
+-- > Accumulator: 13
+-- > Accumulator: 15
+-- > Accumulator: 16
+--
+-- Another example (requires mersenne-random):
+--
+-- > do
+-- >     smp <- start $ effectful randomIO :: IO (IO Double)
 -- >     res <- replicateM 5 smp
 -- >     print res
 --
 -- Output:
 --
 -- > [0.12067753390401374,0.8658877349182655,0.7159264443196786,0.1756941896012891,0.9513646060896676]
-noise :: MTRandom a => SignalGen p (Signal a)
-noise = memo (S randomIO)
+effectful :: IO a                 -- ^ the action to be executed repeatedly
+          -> SignalGen p (Signal a)
+effectful act = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
 
--- | A random source within the 'SignalGen' monad.
-getRandom :: MTRandom a => SignalGen p a
-getRandom = SG (const (const randomIO))
+  let sample = act >>= memoise ref
 
--- | A printing action within the 'SignalGen' monad.
-debug :: String -> SignalGen p ()
-debug = SG . const . const . putStrLn
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | A signal that executes a parametric IO action once at every
+-- sampling.  The parameter is supplied by another signal at every
+-- sampling step.
+effectful1 :: (t -> IO a)          -- ^ the action to be executed repeatedly
+           -> Signal t             -- ^ parameter signal
+           -> SignalGen p (Signal a)
+effectful1 act (S s) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = s >>= act >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with two parameter signals.
+effectful2 :: (t1 -> t2 -> IO a)   -- ^ the action to be executed repeatedly
+           -> Signal t1            -- ^ parameter signal 1
+           -> Signal t2            -- ^ parameter signal 2
+           -> SignalGen p (Signal a)
+effectful2 act (S s1) (S s2) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM2 act s1 s2) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with three parameter signals.
+effectful3 :: (t1 -> t2 -> t3 -> IO a) -- ^ the action to be executed repeatedly
+           -> Signal t1                -- ^ parameter signal 1
+           -> Signal t2                -- ^ parameter signal 2
+           -> Signal t3                -- ^ parameter signal 3
+           -> SignalGen p (Signal a)
+effectful3 act (S s1) (S s2) (S s3) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM3 act s1 s2 s3) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with four parameter signals.
+effectful4 :: (t1 -> t2 -> t3 -> t4 -> IO a) -- ^ the action to be executed repeatedly
+           -> Signal t1                      -- ^ parameter signal 1
+           -> Signal t2                      -- ^ parameter signal 2
+           -> Signal t3                      -- ^ parameter signal 3
+           -> Signal t4                      -- ^ parameter signal 4
+           -> SignalGen p (Signal a)
+effectful4 act (S s1) (S s2) (S s3) (S s4) = SG $ \pool _ -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM4 act s1 s2 s3 s4) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
 -- | The @Show@ instance is only defined for the sake of 'Num'...
 instance Show (Signal a) where

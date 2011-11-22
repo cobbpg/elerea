@@ -1,3 +1,12 @@
+2.5.0 - 111122
+* added SignalGen liftIO equivalent to assist library writers
+* simplified the signatures of effectful* combinators
+* updated Param to use the more modern codebase (like Simple and
+  Clocked); this was necessary to support effectful signals
+* temporarily removed the static optimisation from Param
+* removed dependency on mersenne-random
+* removed legacy branch
+
 2.4.0 - 111111
 * added effectful signals to assist library writers
 

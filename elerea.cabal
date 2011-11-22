@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             2.4.0
+Version:             2.5.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -50,13 +50,9 @@ Extra-Source-Files:
 Library
   Exposed-Modules:
     FRP.Elerea
-    FRP.Elerea.Legacy
-    FRP.Elerea.Legacy.Graph
-    FRP.Elerea.Legacy.Internal
-    FRP.Elerea.Legacy.Delayed
     FRP.Elerea.Simple
     FRP.Elerea.Param
     FRP.Elerea.Clocked
 
-  Build-Depends:       base >= 4 && < 5, containers, mersenne-random
+  Build-Depends:       base >= 4 && < 5, containers
   ghc-options:         -Wall -O2

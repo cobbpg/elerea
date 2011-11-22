@@ -71,7 +71,6 @@ module FRP.Elerea.Clocked
     , start
     , external
     , externalMulti
-    , debug
     -- * Basic building blocks
     , delay
     , generator
@@ -85,9 +84,14 @@ module FRP.Elerea.Clocked
     , transfer2
     , transfer3
     , transfer4
-    -- * Random sources
-    , noise
-    , getRandom
+    -- * Signals with side effects
+    -- $effectful
+    , execute
+    , effectful
+    , effectful1
+    , effectful2
+    , effectful3
+    , effectful4
     ) where
 
 import Control.Applicative
@@ -98,7 +102,6 @@ import Data.IORef
 import Data.Maybe
 import Prelude hiding (until)
 import System.Mem.Weak
-import System.Random.Mersenne
 
 -- | A signal represents a value changing over time.  It can be
 -- thought of as a function of type @Nat -> a@, where the argument is
@@ -160,7 +163,7 @@ newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IORef UpdatePool -> IO a 
 data Phase a = Ready a | Updated a a
 
 instance Functor SignalGen where
-    fmap = (<*>).pure
+    fmap = liftM
 
 instance Applicative SignalGen where
     pure = return
@@ -171,7 +174,7 @@ instance Monad SignalGen where
     SG g >>= f = SG $ \p1 p2 -> g p1 p2 >>= \x -> unSG (f x) p1 p2
 
 instance MonadFix SignalGen where
-    mfix f = SG $ \p1 p2 -> mfix (\x -> unSG (f x) p1 p2)
+    mfix f = SG $ \p1 p2 -> mfix $ \x -> unSG (f x) p1 p2
 
 getUpdate :: Update -> IO (Maybe (Update, UpdateAction))
 getUpdate upd@(USig ptr) = (fmap.fmap) ((,) upd) (deRefWeak ptr)
@@ -280,6 +283,10 @@ delay x0 (S s) = SG $ \_gpool pool -> do
 
     addSignal return update ref pool
 
+-- | Auxiliary function.
+memoise :: IORef (Phase a) -> a -> IO a
+memoise ref x = writeIORef ref (Updated undefined x) >> return x
+
 -- | A reactive signal that takes the value to output from a signal
 -- generator carried by its input with the sampling time provided as
 -- the start time for the generated structure.  It is possible to
@@ -314,11 +321,7 @@ generator :: Signal (SignalGen a) -- ^ the signal of generators to run
 generator (S s) = SG $ \gpool pool -> do
     ref <- newIORef (Ready undefined)
 
-    let sample = do
-            SG g <- s
-            x <- g gpool pool
-            writeIORef ref (Updated undefined x)
-            return x
+    let sample = (s >>= \(SG g) -> g gpool pool) >>= memoise ref
 
     addSignal (const sample) (const (() <$ sample)) ref gpool
 
@@ -344,7 +347,7 @@ memo :: Signal a             -- ^ the signal to cache
 memo (S s) = SG $ \_gpool pool -> do
     ref <- newIORef (Ready undefined)
 
-    let sample = s >>= \x -> writeIORef ref (Updated undefined x) >> return x
+    let sample = s >>= memoise ref
 
     addSignal (const sample) (const (() <$ sample)) ref pool
 
@@ -596,28 +599,116 @@ transfer4 x0 f s1 s2 s3 s4 = mfix $ \sig -> do
     sig' <- delay x0 sig
     memo (liftM5 f s1 s2 s3 s4 sig')
 
--- | A random signal.  It is affected by the associated clock.
+{- $effectful
+
+The following combinators are primarily aimed at library implementors
+who wish build abstractions to effectful libraries on top of Elerea.
+
+-}
+
+-- | An IO action executed in the 'SignalGen' monad. Can be used as
+-- `liftIO`.
+execute :: IO a -> SignalGen a
+execute act = SG $ \_ _ -> act
+
+-- | A signal that executes a given IO action once at every sampling.
+--
+-- In essence, this combinator provides cooperative multitasking
+-- capabilities, and its primary purpose is to assist library writers
+-- in wrapping effectful APIs as conceptually pure signals.  If there
+-- are several effectful signals in the system, their order of
+-- execution is undefined and should not be relied on.
 --
 -- Example:
 --
 -- > do
--- >     smp <- start noise :: IO (IO Double)
+-- >     smp <- start $ do
+-- >         ref <- execute $ newIORef 0
+-- >         effectful $ do
+-- >             x <- readIORef ref
+-- >             putStrLn $ "Count: " ++ show x
+-- >             writeIORef ref $! x+1
+-- >             return ()
+-- >     replicateM_ 5 smp
+--
+-- Output:
+--
+-- > Count: 0
+-- > Count: 1
+-- > Count: 2
+-- > Count: 3
+-- > Count: 4
+--
+-- Another example (requires mersenne-random):
+--
+-- > do
+-- >     smp <- start $ effectful $ return randomIO :: IO (IO Double)
 -- >     res <- replicateM 5 smp
 -- >     print res
 --
 -- Output:
 --
 -- > [0.12067753390401374,0.8658877349182655,0.7159264443196786,0.1756941896012891,0.9513646060896676]
-noise :: MTRandom a => SignalGen (Signal a)
-noise = memo (S randomIO)
+effectful :: IO a                 -- ^ the action to be executed repeatedly
+          -> SignalGen (Signal a)
+effectful act = SG $ \_gpool pool -> do
+  ref <- newIORef (Ready undefined)
 
--- | A random source within the 'SignalGen' monad.
-getRandom :: MTRandom a => SignalGen a
-getRandom = SG $ \_ _ -> randomIO
+  let sample = act >>= memoise ref
 
--- | A printing action within the 'SignalGen' monad.
-debug :: String -> SignalGen ()
-debug s = SG $ \_ _ -> putStrLn s
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | A signal that executes a parametric IO action once at every
+-- sampling.  The parameter is supplied by another signal at every
+-- sampling step.
+effectful1 :: (t -> IO a)          -- ^ the action to be executed repeatedly
+           -> Signal t             -- ^ parameter signal
+           -> SignalGen (Signal a)
+effectful1 act (S s) = SG $ \_gpool pool -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = s >>= act >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with two parameter signals.
+effectful2 :: (t1 -> t2 -> IO a)   -- ^ the action to be executed repeatedly
+           -> Signal t1            -- ^ parameter signal 1
+           -> Signal t2            -- ^ parameter signal 2
+           -> SignalGen (Signal a)
+effectful2 act (S s1) (S s2) = SG $ \_gpool pool -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM2 act s1 s2) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with three parameter signals.
+effectful3 :: (t1 -> t2 -> t3 -> IO a) -- ^ the action to be executed repeatedly
+           -> Signal t1                -- ^ parameter signal 1
+           -> Signal t2                -- ^ parameter signal 2
+           -> Signal t3                -- ^ parameter signal 3
+           -> SignalGen (Signal a)
+effectful3 act (S s1) (S s2) (S s3) = SG $ \_gpool pool -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM3 act s1 s2 s3) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
+
+-- | Like 'effectful1', but with four parameter signals.
+effectful4 :: (t1 -> t2 -> t3 -> t4 -> IO a) -- ^ the action to be executed repeatedly
+           -> Signal t1                      -- ^ parameter signal 1
+           -> Signal t2                      -- ^ parameter signal 2
+           -> Signal t3                      -- ^ parameter signal 3
+           -> Signal t4                      -- ^ parameter signal 4
+           -> SignalGen (Signal a)
+effectful4 act (S s1) (S s2) (S s3) (S s4) = SG $ \_gpool pool -> do
+  ref <- newIORef (Ready undefined)
+
+  let sample = join (liftM4 act s1 s2 s3 s4) >>= memoise ref
+
+  addSignal (const sample) (const (() <$ sample)) ref pool
 
 instance Show (Signal a) where
     showsPrec _ _ s = "<SIGNAL>" ++ s
