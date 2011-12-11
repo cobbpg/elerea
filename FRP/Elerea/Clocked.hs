@@ -73,6 +73,7 @@ module FRP.Elerea.Clocked
     , externalMulti
     -- * Basic building blocks
     , delay
+    , snapshot
     , generator
     , memo
     , until
@@ -282,6 +283,16 @@ delay x0 (S s) = SG $ \_gpool pool -> do
     let update x = s >>= \x' -> x' `seq` writeIORef ref (Updated x' x)
 
     addSignal return update ref pool
+
+-- | A formal conversion from signals to signal generators, which
+-- effectively allows for retrieving the current value of a previously
+-- created signal within a generator.  This includes both signals
+-- defined in an external scope as well as those created earlier in
+-- the same generator.  It can be modelled by the following function:
+--
+-- > snapshot s t_start s_clock = s t_start
+snapshot :: Signal a -> SignalGen a
+snapshot (S s) = SG $ \_ _ -> s
 
 -- | Auxiliary function.
 memoise :: IORef (Phase a) -> a -> IO a

@@ -1,3 +1,7 @@
+2.6.0 - 111211
+* added snapshot to all variants, which allows sampling signals within
+  signal generators
+
 2.5.0 - 111122
 * added SignalGen liftIO equivalent to assist library writers
 * simplified the signatures of effectful* combinators
