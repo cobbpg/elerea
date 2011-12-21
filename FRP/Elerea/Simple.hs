@@ -137,13 +137,25 @@ start (SG gen) = do
   pool <- newIORef []
   S sample <- gen pool
   return $ do
-    let deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
     res <- sample
-    (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-    writeIORef pool ptrs
-    mapM_ fst acts
-    mapM_ snd acts
+    cleanup pool
     return res
+
+cleanup :: IORef UpdatePool -> IO ()
+cleanup pool =
+  let
+    deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
+    loop allPtrs final = do
+      (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
+      if null acts
+        then do
+          final
+          writeIORef pool allPtrs
+        else do
+          writeIORef pool []
+          mapM_ fst acts
+          loop (ptrs++allPtrs) (final >> mapM_ snd acts)
+  in loop [] (return ())
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.
