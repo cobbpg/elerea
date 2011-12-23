@@ -1,3 +1,8 @@
+2.7.0 - 111223
+* fixed an issue with nested signal creations not updating properly
+  (courtesy of Takano Akio)
+* added reference implementation for the simple variant
+
 2.6.0 - 111211
 * added snapshot to all variants, which allows sampling signals within
   signal generators

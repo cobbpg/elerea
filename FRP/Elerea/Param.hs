@@ -147,24 +147,24 @@ start (SG gen) = do
   return $ \param -> do
     sink param
     res <- sample
-    cleanup pool
+    superstep pool
     return res
 
-cleanup :: IORef UpdatePool -> IO ()
-cleanup pool =
-  let
+-- | Performing the two-phase superstep.
+superstep :: IORef UpdatePool -> IO ()
+superstep pool = loop id []
+  where
     deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
-    loop allPtrs final = do
+    loop getPtrs final = do
       (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-      if null acts
-        then do
-          final
-          writeIORef pool allPtrs
-        else do
-          writeIORef pool []
-          mapM_ fst acts
-          loop (ptrs++allPtrs) (final >> mapM_ snd acts)
-  in loop [] (return ())
+      case acts of
+          [] -> do
+              sequence_ final
+              writeIORef pool (getPtrs [])
+          _  -> do
+              writeIORef pool []
+              mapM_ fst acts
+              loop ((ptrs++) . getPtrs) (mapM_ snd acts : final)
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.

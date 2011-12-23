@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             2.6.0
+Version:             2.7.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -36,6 +36,8 @@ Description:
  The basic idea of the implementation is described in the WFLP 2010
  paper /Efficient and Compositional Higher-Order Streams/
  (<http://sgate.emt.bme.hu/documents/patai/publications/PataiWFLP2010.pdf>).
+ .
+ Additional contributions: Takano Akio
 
 Author:              Patai Gergely
 Maintainer:          Patai Gergely (patai.gergely@gmail.com)
@@ -51,6 +53,7 @@ Library
   Exposed-Modules:
     FRP.Elerea
     FRP.Elerea.Simple
+    FRP.Elerea.Simple.Pure
     FRP.Elerea.Param
     FRP.Elerea.Clocked
 

@@ -99,18 +99,18 @@ newtype SignalGen a = SG { unSG :: IORef UpdatePool -> IO a }
 data Phase a = Ready a | Updated a a
 
 instance Functor SignalGen where
-  fmap = liftM
+    fmap = liftM
 
 instance Applicative SignalGen where
-  pure = return
-  (<*>) = ap
+    pure = return
+    (<*>) = ap
 
 instance Monad SignalGen where
-  return x = SG $ \_ -> return x
-  SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
+    return x = SG $ \_ -> return x
+    SG g >>= f = SG $ \p -> g p >>= \x -> unSG (f x) p
 
 instance MonadFix SignalGen where
-  mfix f = SG $ \p -> mfix $ \x -> unSG (f x) p
+    mfix f = SG $ \p -> mfix $ \x -> unSG (f x) p
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and
@@ -134,28 +134,28 @@ instance MonadFix SignalGen where
 start :: SignalGen (Signal a) -- ^ the generator of the top-level signal
       -> IO (IO a)            -- ^ the computation to sample the signal
 start (SG gen) = do
-  pool <- newIORef []
-  S sample <- gen pool
-  return $ do
-    res <- sample
-    cleanup pool
-    return res
+    pool <- newIORef []
+    S sample <- gen pool
+    return $ do
+        res <- sample
+        superstep pool
+        return res
 
-cleanup :: IORef UpdatePool -> IO ()
-cleanup pool =
-  let
+-- | Performing the two-phase superstep.
+superstep :: IORef UpdatePool -> IO ()
+superstep pool = loop id []
+  where
     deref ptr = (fmap.fmap) ((,) ptr) (deRefWeak ptr)
-    loop allPtrs final = do
+    loop getPtrs final = do
       (ptrs,acts) <- unzip.catMaybes <$> (mapM deref =<< readIORef pool)
-      if null acts
-        then do
-          final
-          writeIORef pool allPtrs
-        else do
-          writeIORef pool []
-          mapM_ fst acts
-          loop (ptrs++allPtrs) (final >> mapM_ snd acts)
-  in loop [] (return ())
+      case acts of
+          [] -> do
+              sequence_ final
+              writeIORef pool (getPtrs [])
+          _  -> do
+              writeIORef pool []
+              mapM_ fst acts
+              loop ((ptrs++) . getPtrs) (mapM_ snd acts : final)
 
 -- | Auxiliary function used by all the primitives that create a
 -- mutable variable.
