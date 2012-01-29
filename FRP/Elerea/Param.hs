@@ -434,10 +434,9 @@ externalMulti :: IO (SignalGen p (Signal [a]), a -> IO ()) -- ^ a generator for 
 externalMulti = do
   var <- newMVar []
   return (SG $ \pool _ -> do
-             let sig = S $ readMVar var
-             update <- mkWeak sig (return (),takeMVar var >> putMVar var []) Nothing
-             modifyIORef pool (update:)
-             return sig
+             ref <- newIORef (Ready undefined)
+             let sample = modifyMVar var $ \list -> memoise ref list >> return ([], list)
+             addSignal (const sample) (const (() <$ sample)) ref pool
          ,\val -> do vals <- takeMVar var
                      putMVar var (val:vals)
          )
