@@ -1,3 +1,6 @@
+2.7.0.1 - 120131
+* made externalMulti thread-safe (courtesy of Takano Akio)
+
 2.7.0 - 111223
 * fixed an issue with nested signal creations not updating properly
   (courtesy of Takano Akio)
