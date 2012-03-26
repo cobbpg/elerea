@@ -245,6 +245,9 @@ addSignal sample update ref pool = do
         sig = S $ readIORef ref >>= \v -> case v of
             Ready x     -> sample x
             Updated _ x -> return x
+        {-# NOINLINE sig #-}
+        -- NOINLINE to prevent sig from getting inlined into the
+        -- argument position of mkWeak.
 
     updateActions <- mkWeak sig (upd,fin) Nothing
     modifyIORef pool (USig updateActions:)
