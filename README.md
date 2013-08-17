@@ -16,9 +16,7 @@ variants:
 
 * **Simple**: signals are plain discrete streams isomorphic to
     functions over natural numbers;
-
 * **Param**: adds a globally accessible input signal for convenience;
-
 * **Clocked**: adds the ability to freeze whole subnetworks at will.
 
 This is a minimal library that defines only some basic primitives, and
@@ -35,12 +33,13 @@ Streams](http://sgate.emt.bme.hu/documents/patai/publications/PataiWFLP2010.pdf)
 
 # Related projects
 
+* [Dungeons of Wor](https://github.com/cobbpg/dow): a simple old-school
+  arcade game programmed with Elerea to serve as a non-trivial example
+  for using the library.
 * [Euphoria](https://github.com/tsurucapital/euphoria): a complex
   reactive framework built around Elerea.
-
 * [Helm](https://github.com/z0w0/helm): a game engine that uses Elerea
   for describing interactions and behaviours.
-
 * [LambdaCube 3D](https://github.com/csabahruska/lc-dsl): a purely
   functional GPU pipeline description language, whose showcases mostly
   rely on Elerea.
