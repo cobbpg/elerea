@@ -44,6 +44,7 @@ import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Fix
+import Control.Monad.IO.Class
 import Data.IORef
 import Data.Maybe
 import Prelude hiding (until)
@@ -111,6 +112,9 @@ instance Monad SignalGen where
 
 instance MonadFix SignalGen where
     mfix f = SG $ \p -> mfix $ \x -> unSG (f x) p
+
+instance MonadIO SignalGen where
+    liftIO = execute
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and

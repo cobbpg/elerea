@@ -99,6 +99,7 @@ import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Monad
 import Control.Monad.Fix
+import Control.Monad.IO.Class
 import Data.IORef
 import Data.Maybe
 import Prelude hiding (until)
@@ -176,6 +177,9 @@ instance Monad SignalGen where
 
 instance MonadFix SignalGen where
     mfix f = SG $ \p1 p2 -> mfix $ \x -> unSG (f x) p1 p2
+
+instance MonadIO SignalGen where
+    liftIO = execute
 
 getUpdate :: Update -> IO (Maybe (Update, UpdateAction))
 getUpdate upd@(USig ptr) = (fmap.fmap) ((,) upd) (deRefWeak ptr)
