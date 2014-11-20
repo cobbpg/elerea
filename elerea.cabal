@@ -57,5 +57,5 @@ Library
     FRP.Elerea.Param
     FRP.Elerea.Clocked
 
-  Build-Depends:       base >= 4 && < 5, containers
+  Build-Depends:       base >= 4 && < 5, containers, transformers
   ghc-options:         -Wall -O2
