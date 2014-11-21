@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 {-|
 
@@ -98,6 +99,7 @@ module FRP.Elerea.Clocked
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Monad
+import Control.Monad.Base
 import Control.Monad.Fix
 import Control.Monad.IO.Class
 import Data.IORef
@@ -180,6 +182,9 @@ instance MonadFix SignalGen where
 
 instance MonadIO SignalGen where
     liftIO = execute
+
+instance MonadBase SignalGen SignalGen where
+    liftBase = id
 
 getUpdate :: Update -> IO (Maybe (Update, UpdateAction))
 getUpdate upd@(USig ptr) = (fmap.fmap) ((,) upd) (deRefWeak ptr)

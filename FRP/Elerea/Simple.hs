@@ -1,4 +1,5 @@
 {-# LANGUAGE GeneralizedNewtypeDeriving #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
 
 {-|
 
@@ -43,6 +44,7 @@ module FRP.Elerea.Simple
 import Control.Applicative
 import Control.Concurrent.MVar
 import Control.Monad
+import Control.Monad.Base
 import Control.Monad.Fix
 import Control.Monad.IO.Class
 import Data.IORef
@@ -115,6 +117,9 @@ instance MonadFix SignalGen where
 
 instance MonadIO SignalGen where
     liftIO = execute
+
+instance MonadBase SignalGen SignalGen where
+    liftBase = id
 
 -- | Embedding a signal into an 'IO' environment.  Repeated calls to
 -- the computation returned cause the whole network to be updated, and
