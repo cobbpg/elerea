@@ -1,3 +1,6 @@
+2.8.0 - 140122
+* added MonadIO and MonadBase instances for SignalGen (Mitsutoshi Aoe)
+
 2.7.0.2 - 120401
 * added some inlining annotations (courtesy of Takano Akio)
 
