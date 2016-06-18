@@ -21,6 +21,7 @@ module FRP.Elerea.Param
     , start
     , external
     , externalMulti
+    , unsafeExternal
     -- * Basic building blocks
     , delay
     , snapshot
@@ -151,7 +152,7 @@ start :: SignalGen p (Signal a) -- ^ the generator of the top-level signal
       -> IO (p -> IO a)         -- ^ the computation to sample the signal
 start (SG gen) = do
   pool <- newIORef []
-  (inp,sink) <- external undefined
+  (inp,sink) <- unsafeExternal undefined
   S sample <- gen pool inp
   return $ \param -> do
     sink param
@@ -428,20 +429,39 @@ embed s (SG g) = SG $ \pool _ -> g pool s
 -- world.  Note that this is optional, as all the input of the network
 -- can be fed in through the global parameter, although that is not
 -- really convenient for many signals.
-external :: a                         -- ^ initial value
-         -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
-external x = do
+--
+-- As for why this construct is unsafe, consult the explanation for
+-- the equivalent in "FRP.Elerea.Simple".
+unsafeExternal :: a                         -- ^ initial value
+               -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
+unsafeExternal x = do
   ref <- newIORef x
   return (S (readIORef ref), writeIORef ref)
+
+-- | A signal that can be directly fed through the sink function
+-- returned.  This can be used to attach the network to the outer
+-- world.  The signal always yields the value last written to the
+-- sink at the start of the superstep.  In other words, if the sink
+-- is written less frequently than the network sampled, the output
+-- remains the same during several samples.  If values are pushed
+-- in the sink more frequently, only the last one before sampling
+-- is visible on the output.
+external :: a                                       -- ^ initial value
+         -> IO (SignalGen p (Signal a), a -> IO ()) -- ^ the generator to create the signal and an IO function to feed it
+external x = do
+  ref <- newIORef x
+  return (SG $ \pool _ -> do
+            memoRef <- newIORef (Updated undefined x)
+            let sample = readIORef ref >>= memoise memoRef
+            addSignal (const sample) (const (() <$ sample)) memoRef pool
+         ,writeIORef ref
+         )
 
 -- | An event-like signal that can be fed through the sink function
 -- returned.  The signal carries a list of values fed in since the
 -- last sampling, i.e. it is constantly [] if the sink is never
 -- invoked.  The order of elements is reversed, so the last value
--- passed to the sink is the head of the list.  Note that unlike
--- 'external' this function only returns a generator to be used within
--- the expression constructing the top-level stream, and this
--- generator can only be used once.
+-- passed to the sink is the head of the list.
 externalMulti :: IO (SignalGen p (Signal [a]), a -> IO ()) -- ^ a generator for the event signal and the associated sink
 externalMulti = do
   var <- newMVar []

@@ -17,6 +17,7 @@ module FRP.Elerea.Simple
     , start
     , external
     , externalMulti
+    , unsafeExternal
     -- * Basic building blocks
     , delay
     , snapshot
@@ -376,7 +377,7 @@ until (S s) = SG $ \pool -> do
 -- Example:
 --
 -- > do
--- >     (sig,snk) <- external 4
+-- >     (sig,snk) <- unsafeExternal 4
 -- >     smp <- start (return sig)
 -- >     r1 <- smp
 -- >     r2 <- smp
@@ -390,20 +391,63 @@ until (S s) = SG $ \pool -> do
 -- Output:
 --
 -- > [4,4,7,2]
-external :: a                         -- ^ initial value
-         -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
-external x = do
+--
+-- There are two reasons why this construct is deemed unsafe.
+-- Firstly, if the sink is used from another thread several times
+-- during the sampling process, the observed value of the signal might
+-- be inconsistent within a superstep.  More interestingly, this
+-- unmanaged channel can interact with 'snapshot' in strange ways.
+-- See <https://github.com/cobbpg/elerea/issues/9> for some examples.
+--
+-- Note: this function used to be called @external@ up until version 2.8.0.
+unsafeExternal :: a                         -- ^ initial value
+               -> IO (Signal a, a -> IO ()) -- ^ the signal and an IO function to feed it
+unsafeExternal x = do
   ref <- newIORef x
   return (S (readIORef ref), writeIORef ref)
+
+-- | A signal that can be directly fed through the sink function
+-- returned.  This can be used to attach the network to the outer
+-- world.  The signal always yields the value last written to the
+-- sink at the start of the superstep.  In other words, if the sink
+-- is written less frequently than the network sampled, the output
+-- remains the same during several samples.  If values are pushed
+-- in the sink more frequently, only the last one before sampling
+-- is visible on the output.
+--
+-- Example:
+--
+-- > do
+-- >     (gen,snk) <- external 4
+-- >     smp <- start gen
+-- >     r1 <- smp
+-- >     r2 <- smp
+-- >     snk 7
+-- >     r3 <- smp
+-- >     snk 9
+-- >     snk 2
+-- >     r4 <- smp
+-- >     print [r1,r2,r3,r4]
+--
+-- Output:
+--
+-- > [4,4,7,2]
+external :: a                                     -- ^ initial value
+         -> IO (SignalGen (Signal a), a -> IO ()) -- ^ the generator to create the signal and an IO function to feed it
+external x = do
+  ref <- newIORef x
+  return (SG $ \pool -> do
+            memoRef <- newIORef (Updated undefined x)
+            let sample = readIORef ref >>= memoise memoRef
+            addSignal (const sample) (const (() <$ sample)) memoRef pool
+         ,writeIORef ref
+         )
 
 -- | An event-like signal that can be fed through the sink function
 -- returned.  The signal carries a list of values fed in since the
 -- last sampling, i.e. it is constantly @[]@ if the sink is never
 -- invoked.  The order of elements is reversed, so the last value
--- passed to the sink is the head of the list.  Note that unlike
--- 'external' this function only returns a generator to be used within
--- the expression constructing the top-level stream, and this
--- generator can only be used once.
+-- passed to the sink is the head of the list.
 --
 -- Example:
 --
