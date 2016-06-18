@@ -10,7 +10,7 @@ live signals.  Signals have precise and simple denotational semantics.
 Stateful signals can be safely generated at any time through a monadic
 interface, while stateless combinators can be used in a purely
 applicative style.  Elerea signals can be defined recursively, and
-external input is trivial to attach.  The library comes in three major
+external input is trivial to attach.  The library comes in two major
 variants, one of which you need to import:
 
 * "FRP.Elerea.Simple": signals are plain discrete streams isomorphic
@@ -18,9 +18,6 @@ to functions over natural numbers;
 
 * "FRP.Elerea.Param": adds a globally accessible input signal for
 convenience;
-
-* "FRP.Elerea.Clocked": adds the ability to freeze whole subnetworks
-at will.
 
 Elerea is a minimal library that defines only some basic primitives,
 and you are advised to install @elerea-examples@ as well to get an

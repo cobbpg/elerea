@@ -1,5 +1,5 @@
 Name:                elerea
-Version:             2.8.0
+Version:             2.9.0
 Cabal-Version:       >= 1.2
 Synopsis:            A minimalistic FRP library
 Category:            reactivity, FRP
@@ -16,15 +16,13 @@ Description:
  Stateful signals can be safely generated at any time through a
  monadic interface, while stateless combinators can be used in a
  purely applicative style.  Elerea signals can be defined recursively,
- and external input is trivial to attach.  The library comes in three
+ and external input is trivial to attach.  The library comes in two
  major variants:
  .
  * Simple: signals are plain discrete streams isomorphic to functions
    over natural numbers;
  .
  * Param: adds a globally accessible input signal for convenience;
- .
- * Clocked: adds the ability to freeze whole subnetworks at will.
  .
  This is a minimal library that defines only some basic primitives,
  and you are advised to install @elerea-examples@ as well to get an
@@ -55,7 +53,6 @@ Library
     FRP.Elerea.Simple
     FRP.Elerea.Simple.Pure
     FRP.Elerea.Param
-    FRP.Elerea.Clocked
 
   Build-Depends:       base >= 4 && < 5, containers, transformers, transformers-base
   ghc-options:         -Wall -O2

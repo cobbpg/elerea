@@ -1,3 +1,6 @@
+2.9.0 - 160618
+* removed clocked variant, as it proved to be impractical
+
 2.8.0 - 140122
 * added MonadIO and MonadBase instances for SignalGen (Mitsutoshi Aoe)
 
