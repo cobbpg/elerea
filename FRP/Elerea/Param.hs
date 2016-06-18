@@ -27,7 +27,7 @@ module FRP.Elerea.Param
     , snapshot
     , generator
     , memo
-    , until
+    , till
     , input
     , embed
     -- * Derived combinators
@@ -54,7 +54,6 @@ import Control.Monad.Fix
 import Control.Monad.IO.Class
 import Data.IORef
 import Data.Maybe
-import Prelude hiding (until)
 import System.Mem.Weak
 
 -- | A signal represents a value changing over time.  It can be
@@ -332,7 +331,7 @@ memo (S s) = SG $ \pool _ -> do
 -- no reference to the input signal.  For instance (assuming the rest
 -- of the input is constantly @False@):
 --
--- > until <<False False True True False True ...>> =
+-- > till <<False False True True False True ...>> =
 -- >     <| <<False False True  False False False False False False False ...>>
 -- >        << ---  False True  False False False False False False False ...>>
 -- >        << ---   ---  True  False False False False False False False ...>>
@@ -346,7 +345,7 @@ memo (S s) = SG $ \pool _ -> do
 -- It is observationally equivalent to the following expression (which
 -- would hold onto @s@ forever):
 --
--- > until s = do
+-- > till s = do
 -- >     step <- transfer False (const (||)) s
 -- >     dstep <- delay False step
 -- >     memo (liftA2 (/=) step dstep)
@@ -356,7 +355,7 @@ memo (S s) = SG $ \pool _ -> do
 -- > do
 -- >     smp <- start $ do
 -- >         accum <- stateful 0 (+)
--- >         tick <- until ((>=10) <$> accum)
+-- >         tick <- till ((>=10) <$> accum)
 -- >         return $ liftA2 (,) accum tick
 -- >     res <- forM [4,1,3,5,2,8,6] smp
 -- >     print res
@@ -364,9 +363,9 @@ memo (S s) = SG $ \pool _ -> do
 -- Output:
 --
 -- > [(0,False),(4,False),(5,False),(8,False),(13,True),(15,False),(23,False)]
-until :: Signal Bool               -- ^ the boolean input signal
-      -> SignalGen p (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
-until (S s) = SG $ \pool _ -> do
+till :: Signal Bool               -- ^ the boolean input signal
+     -> SignalGen p (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
+till (S s) = SG $ \pool _ -> do
   ref <- newIORef (Ready undefined)
 
   rsmp <- mfix $ \rs -> newIORef $ do

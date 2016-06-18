@@ -23,7 +23,7 @@ module FRP.Elerea.Simple
     , snapshot
     , generator
     , memo
-    , until
+    , till
     -- * Derived combinators
     , stateful
     , transfer
@@ -50,7 +50,6 @@ import Control.Monad.Fix
 import Control.Monad.IO.Class
 import Data.IORef
 import Data.Maybe
-import Prelude hiding (until)
 import System.Mem.Weak
 
 -- | A signal represents a value changing over time.  It can be
@@ -317,7 +316,7 @@ memo (S s) = SG $ \pool -> do
 -- no reference to the input signal.  For instance (assuming the rest
 -- of the input is constantly @False@):
 --
--- > until <<False False True True False True ...>> =
+-- > till <<False False True True False True ...>> =
 -- >     <| <<False False True  False False False False False False False ...>>
 -- >        << ---  False True  False False False False False False False ...>>
 -- >        << ---   ---  True  False False False False False False False ...>>
@@ -331,7 +330,7 @@ memo (S s) = SG $ \pool -> do
 -- It is observationally equivalent to the following expression (which
 -- would hold onto @s@ forever):
 --
--- > until s = do
+-- > till s = do
 -- >     step <- transfer False (||) s
 -- >     dstep <- delay False step
 -- >     memo (liftA2 (/=) step dstep)
@@ -341,7 +340,7 @@ memo (S s) = SG $ \pool -> do
 -- > do
 -- >     smp <- start $ do
 -- >         cnt <- stateful 0 (+1)
--- >         tick <- until ((>=3) <$> cnt)
+-- >         tick <- till ((>=3) <$> cnt)
 -- >         return $ liftA2 (,) cnt tick
 -- >     res <- replicateM 6 smp
 -- >     print res
@@ -349,9 +348,9 @@ memo (S s) = SG $ \pool -> do
 -- Output:
 --
 -- > [(0,False),(1,False),(2,False),(3,True),(4,False),(5,False)]
-until :: Signal Bool             -- ^ the boolean input signal
-      -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
-until (S s) = SG $ \pool -> do
+till :: Signal Bool             -- ^ the boolean input signal
+     -> SignalGen (Signal Bool) -- ^ a one-shot signal true only the first time the input is true
+till (S s) = SG $ \pool -> do
   ref <- newIORef (Ready undefined)
 
   rsmp <- mfix $ \rs -> newIORef $ do

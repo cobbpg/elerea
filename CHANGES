@@ -2,6 +2,7 @@
 * removed clocked variant, as it proved to be impractical
 * renamed external to unsafeExternal
 * introduced safe (managed) external signals
+* renamed until to till to avoid name clash with the prelude
 
 2.8.0 - 140122
 * added MonadIO and MonadBase instances for SignalGen (Mitsutoshi Aoe)
